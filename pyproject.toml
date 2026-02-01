@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crux-cdc"
+version = "0.1.0"
+description = "Open-source clock domain crossing (CDC) and reset domain crossing (RDC) analysis engine"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    {name = "Crux Contributors"},
+]
+keywords = ["cdc", "rdc", "eda", "verilog", "systemverilog", "clock-domain-crossing", "yosys"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+crux = "crux.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

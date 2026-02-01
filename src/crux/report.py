@@ -1,0 +1,142 @@
+"""Generate CDC analysis reports in text and JSON formats."""
+
+from __future__ import annotations
+
+import json
+import sys
+from collections import defaultdict
+from datetime import datetime
+from io import StringIO
+
+from . import __version__
+from .cdc_check import CDCReport, Crossing, Violation, Severity
+
+
+def format_text_report(report: CDCReport, file=None) -> str:
+    """Generate a human-readable text report."""
+    buf = StringIO()
+
+    buf.write("=" * 60 + "\n")
+    buf.write("  Crux CDC Analysis Report\n")
+    buf.write("=" * 60 + "\n\n")
+
+    buf.write(f"  Design:   {report.module_name}\n")
+    buf.write(f"  Date:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    buf.write(f"  Version:  crux {__version__}\n\n")
+
+    # Clock domains
+    buf.write("Clock Domains:\n")
+    buf.write("-" * 40 + "\n")
+    if not report.domains:
+        buf.write("  (no flip-flops found)\n")
+    else:
+        for domain in sorted(report.domains.values(), key=lambda d: d.clock_name):
+            edge = "posedge" if domain.polarity else "negedge"
+            buf.write(
+                f"  {domain.clock_name:<20s} {len(domain.flip_flops):>4d} FFs  ({edge})\n"
+            )
+    buf.write("\n")
+
+    # Crossing summary by domain pair
+    pair_crossings: dict[tuple[str, str], list[Crossing]] = defaultdict(list)
+    for c in report.crossings:
+        pair_crossings[(c.source_domain, c.dest_domain)].append(c)
+
+    buf.write("Domain Crossings:\n")
+    buf.write("-" * 60 + "\n")
+    if not pair_crossings:
+        buf.write("  (no crossings found)\n")
+    else:
+        for (src, dst), clist in sorted(pair_crossings.items()):
+            synced = sum(1 for c in clist if c.is_synchronized)
+            violations = len(clist) - synced
+            status = "OK" if violations == 0 else f"{violations} VIOLATION(S)"
+            buf.write(
+                f"  {src} -> {dst}: "
+                f"{len(clist)} signal(s), {synced} synchronized, {status}\n"
+            )
+    buf.write("\n")
+
+    # Violations
+    buf.write("Violations:\n")
+    buf.write("-" * 60 + "\n")
+    if not report.violations:
+        buf.write("  None - all crossings are properly synchronized.\n")
+    else:
+        for i, v in enumerate(report.violations, 1):
+            buf.write(f"  {i}. {v.format()}\n")
+
+            # Source location if available
+            src_ff = None
+            dest_ff = None
+            # Access source info from the crossing
+            c = v.crossing
+            buf.write(f"     Signal: {c.signal_name}\n")
+            buf.write(f"     Path:   {c.source_domain} -> {c.dest_domain}\n")
+            buf.write(f"     Source FF: {c.source_ff_name}\n")
+            buf.write(f"     Dest FF:   {c.dest_ff_name}\n")
+            buf.write("\n")
+
+    # Summary
+    buf.write("=" * 60 + "\n")
+    buf.write(f"  Total crossings:  {len(report.crossings)}\n")
+    buf.write(f"  Synchronized:     {sum(1 for c in report.crossings if c.is_synchronized)}\n")
+    buf.write(f"  Errors:           {report.error_count}\n")
+    buf.write(f"  Warnings:         {report.warning_count}\n")
+    buf.write("=" * 60 + "\n")
+
+    text = buf.getvalue()
+
+    if file is not None:
+        file.write(text)
+
+    return text
+
+
+def format_json_report(report: CDCReport) -> dict:
+    """Generate a machine-readable JSON report."""
+    return {
+        "tool": "crux",
+        "version": __version__,
+        "design": report.module_name,
+        "clock_domains": [
+            {
+                "name": d.clock_name,
+                "clock_net": d.clock_net,
+                "polarity": "posedge" if d.polarity else "negedge",
+                "ff_count": len(d.flip_flops),
+            }
+            for d in sorted(report.domains.values(), key=lambda d: d.clock_name)
+        ],
+        "crossings": [
+            {
+                "source_ff": c.source_ff_name,
+                "dest_ff": c.dest_ff_name,
+                "source_domain": c.source_domain,
+                "dest_domain": c.dest_domain,
+                "signal": c.signal_name,
+                "has_combo_logic": c.path_has_combo,
+                "is_synchronized": c.is_synchronized,
+            }
+            for c in report.crossings
+        ],
+        "violations": [
+            {
+                "rule": v.rule.value,
+                "severity": v.severity.value,
+                "message": v.message,
+                "signal": v.crossing.signal_name,
+                "source_domain": v.crossing.source_domain,
+                "dest_domain": v.crossing.dest_domain,
+                "source_ff": v.crossing.source_ff_name,
+                "dest_ff": v.crossing.dest_ff_name,
+            }
+            for v in report.violations
+        ],
+        "summary": {
+            "total_crossings": len(report.crossings),
+            "synchronized": sum(1 for c in report.crossings if c.is_synchronized),
+            "errors": report.error_count,
+            "warnings": report.warning_count,
+        },
+    }
