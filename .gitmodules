@@ -1,0 +1,3 @@
+[submodule "extern/yosys-slang"]
+	path = extern/yosys-slang
+	url = https://github.com/povik/yosys-slang.git

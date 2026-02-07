@@ -18,6 +18,16 @@ venv/
 .coverage
 htmlcov/
 
+# External dependencies (not submodules)
+# OpenTitan is fetched via `make opentitan-setup`, not tracked in git
+extern/opentitan/
+
+# yosys-slang build artifacts (submodule itself is tracked)
+extern/yosys-slang/build/
+
+# Yosys intermediate files
+/tmp/crux_*/
+
 # IDE
 .vscode/
 .idea/

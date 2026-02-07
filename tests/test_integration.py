@@ -83,11 +83,81 @@ class TestComboBeforeSync:
 class TestMultiBitCDC:
     """multi_bit_cdc.v: multi-bit bus crossing without encoding."""
 
-    def test_detects_missing_sync(self):
+    def test_detects_multi_bit_cdc(self):
         report = _run_analysis("multi_bit_cdc.v", "multi_bit_cdc")
         assert report.error_count >= 1
         rules = {v.rule for v in report.violations}
+        assert ViolationType.MULTI_BIT_CDC in rules
+
+
+class TestRealisticSoC:
+    """realistic_soc.v: multi-module design with mixed CDC patterns + SDC."""
+
+    def _run_with_sdc(self):
+        verilog_path = str(DESIGNS / "realistic_soc.v")
+        sdc_path = DESIGNS.parent / "constraints" / "realistic_soc.sdc"
+        json_path = run_yosys([verilog_path], "realistic_soc")
+        netlist = Netlist.from_json(json_path)
+        from crux.sdc_parser import parse_sdc
+        sdc = parse_sdc(sdc_path)
+        return analyze_cdc(netlist, sdc=sdc)
+
+    def test_three_domains(self):
+        report = self._run_with_sdc()
+        assert len(report.domains) == 3
+
+    def test_pulse_sync_recognized(self):
+        """The prim_pulse_sync path should be recognized as synchronized."""
+        report = self._run_with_sdc()
+        synced = [c for c in report.crossings if c.is_synchronized]
+        assert len(synced) >= 1
+
+    def test_multi_bit_cdc_detected(self):
+        """8-bit sys_status -> io_status should flag MULTI_BIT_CDC."""
+        report = self._run_with_sdc()
+        rules = {v.rule for v in report.violations}
+        assert ViolationType.MULTI_BIT_CDC in rules
+
+    def test_missing_sync_detected(self):
+        """sys_status[0] -> aon_flag should flag MISSING_SYNC."""
+        report = self._run_with_sdc()
+        rules = {v.rule for v in report.violations}
         assert ViolationType.MISSING_SYNC in rules
+
+    def test_exactly_two_violations(self):
+        """Should have exactly 2 violations: multi-bit + missing sync."""
+        report = self._run_with_sdc()
+        assert report.error_count == 2
+
+    def test_sdc_loaded(self):
+        report = self._run_with_sdc()
+        assert report.sdc_loaded is True
+
+
+class TestSDCParser:
+    """Test SDC constraint parsing and clock relationship logic."""
+
+    def test_parse_earlgrey_sdc(self):
+        from crux.sdc_parser import parse_sdc
+        sdc_path = DESIGNS.parent / "constraints" / "earlgrey_cdc.sdc"
+        sdc = parse_sdc(sdc_path)
+        assert len(sdc.clocks) == 6
+        assert "clk_main" in sdc.clocks
+        assert sdc.clocks["clk_io_div2"].is_generated
+
+    def test_async_detection(self):
+        from crux.sdc_parser import parse_sdc
+        sdc_path = DESIGNS.parent / "constraints" / "earlgrey_cdc.sdc"
+        sdc = parse_sdc(sdc_path)
+        assert sdc.are_clocks_async("clk_main", "clk_usb") is True
+        assert sdc.are_clocks_async("clk_io", "clk_io_div2") is False
+
+    def test_related_detection(self):
+        from crux.sdc_parser import parse_sdc
+        sdc_path = DESIGNS.parent / "constraints" / "earlgrey_cdc.sdc"
+        sdc = parse_sdc(sdc_path)
+        assert sdc.are_clocks_related("clk_io", "clk_io_div4") is True
+        assert sdc.are_clocks_related("clk_main", "clk_usb") is False
 
 
 class TestJSONReport:

@@ -77,12 +77,31 @@ def format_text_report(report: CDCReport, file=None) -> str:
             buf.write(f"     Dest FF:   {c.dest_ff_name}\n")
             buf.write("\n")
 
+    # Synchronized crossings (show sync type for visibility)
+    synced = [c for c in report.crossings if c.is_synchronized]
+    if synced:
+        buf.write("Synchronized Crossings:\n")
+        buf.write("-" * 60 + "\n")
+        for c in synced:
+            sync_type = ""
+            if c.synchronizer:
+                sync_type = f" [{c.synchronizer.sync_type}"
+                if c.synchronizer.module_name:
+                    sync_type += f": {c.synchronizer.module_name}"
+                sync_type += f", {c.synchronizer.depth}-stage]"
+            buf.write(
+                f"  {c.signal_name}: {c.source_domain} -> {c.dest_domain}{sync_type}\n"
+            )
+        buf.write("\n")
+
     # Summary
     buf.write("=" * 60 + "\n")
     buf.write(f"  Total crossings:  {len(report.crossings)}\n")
     buf.write(f"  Synchronized:     {sum(1 for c in report.crossings if c.is_synchronized)}\n")
     buf.write(f"  Errors:           {report.error_count}\n")
     buf.write(f"  Warnings:         {report.warning_count}\n")
+    if report.sdc_loaded:
+        buf.write(f"  SDC constraints:  loaded\n")
     buf.write("=" * 60 + "\n")
 
     text = buf.getvalue()

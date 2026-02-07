@@ -29,28 +29,78 @@ def check_yosys() -> str:
     return result.stdout.strip()
 
 
+def _find_slang_plugin() -> str | None:
+    """Find the yosys-slang plugin shared library."""
+    candidates = [
+        # Built from our submodule
+        Path(__file__).parent.parent.parent / "extern" / "yosys-slang" / "build" / "slang.so",
+        # System-wide install
+        Path("/usr/lib/yosys/plugins/slang.so"),
+        Path("/usr/local/lib/yosys/plugins/slang.so"),
+        Path("/usr/share/yosys/plugins/slang.so"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
 def generate_script(
     verilog_files: list[str],
     top_module: str,
     json_output: str,
+    use_slang: bool = False,
+    slang_plugin_path: str | None = None,
+    include_dirs: list[str] | None = None,
+    defines: list[str] | None = None,
 ) -> str:
-    """Generate a Yosys TCL script for CDC netlist preparation.
+    """Generate a Yosys script for CDC netlist preparation.
 
-    The script:
-    1. Reads all Verilog files
-    2. Sets the top module and checks hierarchy
-    3. Converts behavioral processes to explicit FFs (proc)
-    4. Flattens the design (CDC paths span module boundaries)
-    5. Optimizes to clean up unused logic
-    6. Exports to JSON with explicit $dff cells
+    Supports two frontend modes:
+    - Verilog mode (default): uses Yosys's built-in read_verilog
+    - SystemVerilog mode (--sv): uses yosys-slang plugin for full SV support
     """
     lines = []
 
-    # Read input files
-    for f in verilog_files:
-        # Escape any special characters in path
-        escaped = f.replace("\\", "\\\\").replace('"', '\\"')
-        lines.append(f'read_verilog "{escaped}"')
+    if use_slang:
+        if slang_plugin_path:
+            abs_plugin = str(Path(slang_plugin_path).resolve())
+            lines.append(f"plugin -i {abs_plugin}")
+        else:
+            lines.append("plugin -i slang")
+
+        # Build read_slang command with all files (absolute paths, no quotes)
+        # slang uses its own argument parser, not Yosys TCL-style quoting
+        slang_args = []
+        for f in verilog_files:
+            slang_args.append(str(Path(f).resolve()))
+
+        if include_dirs:
+            for d in include_dirs:
+                slang_args.append(f"-I {str(Path(d).resolve())}")
+
+        if defines:
+            for d in defines:
+                slang_args.append(f"-D{d}")
+
+        slang_args.append(f"--top {top_module}")
+        lines.append(f"read_slang {' '.join(slang_args)}")
+    else:
+        # Standard Verilog mode - use absolute paths since Yosys -s resolves
+        # relative to the script file, not the caller's CWD
+        extra_flags = []
+        if defines:
+            extra_flags.extend(f"-D{d}" for d in defines)
+        if include_dirs:
+            for d in include_dirs:
+                abs_d = str(Path(d).resolve())
+                extra_flags.append(f"-I {abs_d}")
+
+        extra = (" " + " ".join(extra_flags)) if extra_flags else ""
+        for f in verilog_files:
+            abs_f = str(Path(f).resolve())
+            escaped = abs_f.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'read_verilog -sv{extra} "{escaped}"')
 
     # Elaborate
     lines.append(f"hierarchy -check -top {top_module}")
@@ -79,19 +129,36 @@ def run_yosys(
     top_module: str,
     work_dir: str | None = None,
     quiet: bool = True,
+    use_slang: bool = False,
+    include_dirs: list[str] | None = None,
+    defines: list[str] | None = None,
 ) -> Path:
-    """Run Yosys on the given Verilog files and return path to JSON netlist.
+    """Run Yosys on the given Verilog/SV files and return path to JSON netlist.
 
     Args:
         verilog_files: Paths to Verilog/SystemVerilog source files.
         top_module: Name of the top-level module.
         work_dir: Directory for intermediate files. Uses temp dir if None.
         quiet: Suppress Yosys output.
+        use_slang: Use yosys-slang plugin for SystemVerilog.
+        include_dirs: Include directories for `include resolution.
+        defines: Preprocessor defines (e.g. ["SYNTHESIS", "WIDTH=8"]).
 
     Returns:
         Path to the generated JSON netlist file.
     """
     check_yosys()
+
+    # Find slang plugin if needed
+    slang_plugin_path = None
+    if use_slang:
+        slang_plugin_path = _find_slang_plugin()
+        if slang_plugin_path is None:
+            raise YosysError(
+                "yosys-slang plugin not found. Build it with:\n"
+                "  cd extern/yosys-slang && make\n"
+                "Or install system-wide."
+            )
 
     if work_dir is None:
         work_dir = tempfile.mkdtemp(prefix="crux_")
@@ -99,7 +166,13 @@ def run_yosys(
     work_path.mkdir(parents=True, exist_ok=True)
 
     json_output = str(work_path / "netlist.json")
-    script = generate_script(verilog_files, top_module, json_output)
+    script = generate_script(
+        verilog_files, top_module, json_output,
+        use_slang=use_slang,
+        slang_plugin_path=slang_plugin_path,
+        include_dirs=include_dirs,
+        defines=defines,
+    )
 
     script_path = work_path / "cdc_prep.ys"
     script_path.write_text(script)
@@ -114,7 +187,7 @@ def run_yosys(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
+            timeout=300,
         )
     except subprocess.TimeoutExpired:
         raise YosysError("Yosys timed out after 300 seconds")
