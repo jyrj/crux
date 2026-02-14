@@ -1,15 +1,7 @@
-// realistic_soc.v - Realistic multi-module SoC-like design with mixed CDC patterns
-// Mimics OpenTitan-style architecture: sys_clk, io_clk, aon_clk
-// Contains:
-//   - Properly synchronized paths (2FF sync in a submodule)
-//   - Pulse synchronizer pattern (toggle + 2FF + edge detect)
-//   - Missing synchronizer (bug)
-//   - Multi-bit bus crossing without encoding (bug)
-//   - Combo logic before sync (bug)
+// Multi-module SoC: sys_clk, io_clk, aon_clk with mixed sync/unsync crossings
 
-// ============================================================================
 // 2FF Synchronizer primitive (like OpenTitan's prim_flop_2sync)
-// ============================================================================
+// ----------
 module prim_flop_2sync #(
     parameter WIDTH = 1
 ) (
@@ -31,10 +23,9 @@ module prim_flop_2sync #(
     end
 endmodule
 
-// ============================================================================
 // Pulse synchronizer (like OpenTitan's prim_pulse_sync)
 // Converts a pulse in src domain to a pulse in dst domain via toggle + 2FF
-// ============================================================================
+// ----------
 module prim_pulse_sync (
     input  wire clk_src_i,
     input  wire rst_src_ni,
@@ -74,9 +65,8 @@ module prim_pulse_sync (
     assign dst_pulse_o = dst_level_q ^ dst_level;
 endmodule
 
-// ============================================================================
 // Status register module (sys_clk domain)
-// ============================================================================
+// ----------
 module status_reg (
     input  wire        clk_i,
     input  wire        rst_ni,
@@ -91,9 +81,8 @@ module status_reg (
     end
 endmodule
 
-// ============================================================================
 // Top-level SoC module
-// ============================================================================
+// ----------
 module realistic_soc (
     // Clock domains
     input  wire        sys_clk,      // Main system clock (100 MHz)
@@ -113,9 +102,8 @@ module realistic_soc (
     output reg         aon_flag
 );
 
-    // ========================================================================
     // System clock domain registers
-    // ========================================================================
+    //
     reg uart_tx_req;
     reg [7:0] sys_status;
 
@@ -129,10 +117,9 @@ module realistic_soc (
         end
     end
 
-    // ========================================================================
     // GOOD: Pulse sync from sys_clk -> io_clk (uart TX request)
     // This uses the prim_pulse_sync module - should be recognized as safe
-    // ========================================================================
+    //
     prim_pulse_sync u_uart_pulse_sync (
         .clk_src_i   (sys_clk),
         .rst_src_ni  (rst_n),
@@ -142,10 +129,9 @@ module realistic_soc (
         .dst_pulse_o (uart_tx_sync)
     );
 
-    // ========================================================================
     // GOOD: 2FF sync from sys_clk -> aon_clk (wakeup event)
     // Direct instantiation of prim_flop_2sync - should be recognized
-    // ========================================================================
+    //
     wire wakeup_synced;
     prim_flop_2sync #(.WIDTH(1)) u_wakeup_sync (
         .clk_i  (aon_clk),
@@ -163,10 +149,9 @@ module realistic_soc (
     end
     assign wakeup_ack = wakeup_ack_reg;
 
-    // ========================================================================
     // BUG 1: Missing synchronizer - sys_clk -> aon_clk
     // aon_flag driven from sys_clk domain register without sync
-    // ========================================================================
+    //
     always @(posedge aon_clk or negedge rst_n) begin
         if (!rst_n)
             aon_flag <= 1'b0;
@@ -174,10 +159,9 @@ module realistic_soc (
             aon_flag <= sys_status[0];  // VIOLATION: unsynchronized crossing
     end
 
-    // ========================================================================
     // BUG 2: Multi-bit CDC without encoding - sys_clk -> io_clk
     // 8-bit status bus crosses without gray code or handshake
-    // ========================================================================
+    //
     always @(posedge io_clk or negedge rst_n) begin
         if (!rst_n)
             io_status <= 8'h0;

@@ -1,0 +1,6 @@
+waivers:
+  - rule: MULTI_BIT_CDC
+    signal: "sys_status"
+    from_domain: "sys_clk"
+    to_domain: "io_clk"
+    reason: "quasi-static register, read only during idle"

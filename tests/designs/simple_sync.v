@@ -1,6 +1,4 @@
-// simple_sync.v - Proper 2FF synchronizer (MUST pass clean)
-// A signal from clk_a domain is properly synchronized into clk_b
-// domain using a standard two-flop synchronizer.
+// Proper 2FF synchronizer: clk_a -> clk_b, should pass clean
 
 module simple_sync (
     input  wire clk_a,

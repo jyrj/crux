@@ -1,6 +1,4 @@
-// simple_cdc.v - Missing synchronizer (MUST flag MISSING_SYNC)
-// A signal from clk_a domain is sampled directly by clk_b domain
-// with no synchronization. This is a real CDC bug.
+// Missing synchronizer: clk_a -> clk_b with no sync
 
 module simple_cdc (
     input  wire clk_a,

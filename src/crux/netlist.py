@@ -25,6 +25,12 @@ Q_PORT_NAMES = ("Q",)
 # Reset ports
 RESET_PORT_NAMES = ("ARST", "SRST", "R", "S")
 
+# Async reset cell types (as opposed to sync reset $sdff/$sdffe)
+ASYNC_RESET_TYPES = frozenset({"$adff", "$adffe", "$dffsr"})
+
+# MUX cell types (used for reconvergence classification)
+MUX_TYPES = frozenset({"$mux", "$pmux"})
+
 
 def is_dff_type(cell_type: str) -> bool:
     """Check if a cell type is a flip-flop."""
@@ -202,3 +208,20 @@ class Netlist:
         if bit_id in self.port_bits:
             return self.port_bits[bit_id]
         return f"net_{bit_id}"
+
+
+def has_async_reset(ff: FlipFlop) -> bool:
+    """Check if a flip-flop has an asynchronous reset.
+
+    Async resets ($adff, $adffe, $dffsr) cause RDC concerns when crossing domains.
+    Sync resets ($sdff, $sdffe) are sampled on clock edge - no metastability risk.
+    """
+    if ff.reset_net is None:
+        return False
+    if ff.cell_type in ASYNC_RESET_TYPES:
+        return True
+    # Tech-mapped: $_DFF_PP0_ etc. - 3+ chars after $_DFF_ means has reset (always async)
+    if ff.cell_type.startswith(DFF_TECHMAP_PREFIX):
+        suffix = ff.cell_type[len(DFF_TECHMAP_PREFIX):]
+        return len(suffix) >= 3
+    return False

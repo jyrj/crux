@@ -1,8 +1,4 @@
-## OpenTitan EarlGrey-style SDC constraints
-## This is a realistic SDC file based on OpenTitan's clock architecture.
-## Real SDC files are TCL scripts - variables, control flow, everything works.
-
-# Main clock domains
+# EarlGrey-style clock constraints
 create_clock -name clk_main  -period 10.0  [get_ports clk_main_i]
 create_clock -name clk_io    -period 41.67 [get_ports clk_io_i]
 create_clock -name clk_usb   -period 20.83 [get_ports clk_usb_i]

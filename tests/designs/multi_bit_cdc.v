@@ -1,7 +1,4 @@
-// multi_bit_cdc.v - Multi-bit signal crossing without proper encoding
-// A multi-bit bus crosses from clk_a to clk_b without gray coding,
-// handshake, or MCP. Individual bits may be sampled at different
-// times, leading to bus incoherency (e.g., 01->10 read as 00 or 11).
+// 4-bit bus crossing clk_a -> clk_b without gray code or handshake
 
 module multi_bit_cdc (
     input  wire       clk_a,

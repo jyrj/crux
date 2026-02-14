@@ -1,4 +1,4 @@
-"""Generate CDC analysis reports in text and JSON formats."""
+"""Generate CDC/RDC analysis reports in text and JSON formats."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def format_text_report(report: CDCReport, file=None) -> str:
     buf = StringIO()
 
     buf.write("=" * 60 + "\n")
-    buf.write("  Crux CDC Analysis Report\n")
+    buf.write("  Crux CDC/RDC Analysis Report\n")
     buf.write("=" * 60 + "\n\n")
 
     buf.write(f"  Design:   {report.module_name}\n")
@@ -57,27 +57,35 @@ def format_text_report(report: CDCReport, file=None) -> str:
             )
     buf.write("\n")
 
-    # Violations
+    # Violations (errors and warnings only in main section)
+    errors_warnings = [v for v in report.violations if v.severity in (Severity.ERROR, Severity.WARNING)]
     buf.write("Violations:\n")
     buf.write("-" * 60 + "\n")
-    if not report.violations:
-        buf.write("  None - all crossings are properly synchronized.\n")
+    if not errors_warnings:
+        buf.write("  None.\n")
     else:
-        for i, v in enumerate(report.violations, 1):
+        for i, v in enumerate(errors_warnings, 1):
             buf.write(f"  {i}. {v.format()}\n")
-
-            # Source location if available
-            src_ff = None
-            dest_ff = None
-            # Access source info from the crossing
-            c = v.crossing
-            buf.write(f"     Signal: {c.signal_name}\n")
-            buf.write(f"     Path:   {c.source_domain} -> {c.dest_domain}\n")
-            buf.write(f"     Source FF: {c.source_ff_name}\n")
-            buf.write(f"     Dest FF:   {c.dest_ff_name}\n")
+            if v.crossing:
+                c = v.crossing
+                buf.write(f"     Signal: {c.signal_name}\n")
+                buf.write(f"     Path:   {c.source_domain} -> {c.dest_domain}\n")
+            elif v.signal_name:
+                buf.write(f"     Signal: {v.signal_name}\n")
+                if v.source_domain and v.dest_domain:
+                    buf.write(f"     Path:   {v.source_domain} -> {v.dest_domain}\n")
             buf.write("\n")
 
-    # Synchronized crossings (show sync type for visibility)
+    # Info-level findings (reconvergence through mux, etc.)
+    infos = [v for v in report.violations if v.severity == Severity.INFO]
+    if infos:
+        buf.write("Info:\n")
+        buf.write("-" * 60 + "\n")
+        for v in infos:
+            buf.write(f"  {v.format()}\n")
+        buf.write("\n")
+
+    # Synchronized crossings
     synced = [c for c in report.crossings if c.is_synchronized]
     if synced:
         buf.write("Synchronized Crossings:\n")
@@ -94,21 +102,32 @@ def format_text_report(report: CDCReport, file=None) -> str:
             )
         buf.write("\n")
 
+    # Waived violations
+    if report.waived_violations:
+        buf.write("Waived Violations:\n")
+        buf.write("-" * 60 + "\n")
+        for v, w in report.waived_violations:
+            buf.write(f"  [{v.rule.value}] {v.signal_name}")
+            buf.write(f" - waived: {w.reason}\n")
+        buf.write("\n")
+
     # Summary
     buf.write("=" * 60 + "\n")
     buf.write(f"  Total crossings:  {len(report.crossings)}\n")
     buf.write(f"  Synchronized:     {sum(1 for c in report.crossings if c.is_synchronized)}\n")
     buf.write(f"  Errors:           {report.error_count}\n")
     buf.write(f"  Warnings:         {report.warning_count}\n")
+    if report.info_count:
+        buf.write(f"  Info:             {report.info_count}\n")
+    if report.waived_violations:
+        buf.write(f"  Waived:           {len(report.waived_violations)}\n")
     if report.sdc_loaded:
         buf.write(f"  SDC constraints:  loaded\n")
     buf.write("=" * 60 + "\n")
 
     text = buf.getvalue()
-
     if file is not None:
         file.write(text)
-
     return text
 
 
@@ -144,18 +163,26 @@ def format_json_report(report: CDCReport) -> dict:
                 "rule": v.rule.value,
                 "severity": v.severity.value,
                 "message": v.message,
-                "signal": v.crossing.signal_name,
-                "source_domain": v.crossing.source_domain,
-                "dest_domain": v.crossing.dest_domain,
-                "source_ff": v.crossing.source_ff_name,
-                "dest_ff": v.crossing.dest_ff_name,
+                "signal": v.signal_name,
+                "source_domain": v.source_domain,
+                "dest_domain": v.dest_domain,
             }
             for v in report.violations
+        ],
+        "waived": [
+            {
+                "rule": v.rule.value,
+                "signal": v.signal_name,
+                "reason": w.reason,
+            }
+            for v, w in report.waived_violations
         ],
         "summary": {
             "total_crossings": len(report.crossings),
             "synchronized": sum(1 for c in report.crossings if c.is_synchronized),
             "errors": report.error_count,
             "warnings": report.warning_count,
+            "info": report.info_count,
+            "waived": len(report.waived_violations),
         },
     }

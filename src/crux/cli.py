@@ -1,4 +1,4 @@
-"""CLI entry point for crux CDC analysis."""
+"""CLI entry point for crux CDC/RDC analysis."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from .yosys_runner import run_yosys, YosysError
 from .netlist import Netlist
 from .cdc_check import analyze_cdc
 from .sdc_parser import parse_sdc, SDCConstraints
+from .waivers import load_waivers, Waiver
 from .report import format_text_report, format_json_report
 
 
@@ -21,6 +22,8 @@ from .report import format_text_report, format_json_report
 @click.option("--top", required=True, help="Top-level module name")
 @click.option("--sdc", "sdc_path", type=click.Path(exists=True), default=None,
               help="SDC constraints file (clock definitions, async groups)")
+@click.option("--waiver", "waiver_path", type=click.Path(exists=True), default=None,
+              help="YAML waiver file for suppressing known violations")
 @click.option("--json-report", "json_path", type=click.Path(), default=None,
               help="Write JSON report to file")
 @click.option("--work-dir", type=click.Path(), default=None,
@@ -31,6 +34,9 @@ from .report import format_text_report, format_json_report
               help="Include directory for `include resolution (repeatable)")
 @click.option("-D", "--define", "defines", multiple=True,
               help="Preprocessor define (repeatable, e.g. -DSYNTHESIS)")
+@click.option("--max-recon-depth", type=int, default=2,
+              help="Max FF levels to trace for reconvergence (default: 2)")
+@click.option("--no-rdc", is_flag=True, help="Skip reset domain crossing analysis")
 @click.option("-q", "--quiet", is_flag=True, help="Only show violations")
 @click.option("-v", "--verbose", is_flag=True, help="Show Yosys output")
 @click.version_option(version=__version__)
@@ -38,34 +44,40 @@ def main(
     verilog_files: tuple[str, ...],
     top: str,
     sdc_path: str | None,
+    waiver_path: str | None,
     json_path: str | None,
     work_dir: str | None,
     use_slang: bool,
     include_dirs: tuple[str, ...],
     defines: tuple[str, ...],
+    max_recon_depth: int,
+    no_rdc: bool,
     quiet: bool,
     verbose: bool,
 ):
-    """Crux: Clock Domain Crossing analysis engine.
+    """Crux: Clock & Reset Domain Crossing analysis engine.
 
-    Analyze Verilog/SystemVerilog designs for CDC violations.
+    Analyze Verilog/SystemVerilog designs for CDC and RDC violations.
 
     \b
     Examples:
       crux --top my_design rtl/*.v
       crux --top uart_core --sdc constraints.sdc rtl/uart.sv
-      crux --sv --top aon_timer rtl/*.sv   # SystemVerilog via yosys-slang
+      crux --sv --top aon_timer rtl/*.sv
+      crux --top design --waiver waivers.yaml rtl/*.v
     """
     file_list = list(verilog_files)
 
     if not quiet:
-        click.echo(f"crux {__version__} - CDC analysis engine")
+        click.echo(f"crux {__version__} - CDC/RDC analysis engine")
         click.echo(f"Analyzing {len(file_list)} file(s), top module: {top}")
         if sdc_path:
             click.echo(f"SDC constraints: {sdc_path}")
+        if waiver_path:
+            click.echo(f"Waivers: {waiver_path}")
         click.echo()
 
-    # Parse SDC constraints if provided
+    # Parse SDC constraints
     sdc: SDCConstraints | None = None
     if sdc_path:
         if not quiet:
@@ -78,10 +90,18 @@ def main(
                 f"{len(sdc.false_paths)} false path(s)"
             )
 
-    # Run Yosys to get netlist
+    # Load waivers
+    waivers: list[Waiver] | None = None
+    if waiver_path:
+        if not quiet:
+            click.echo("Loading waivers...")
+        waivers = load_waivers(waiver_path)
+        if not quiet:
+            click.echo(f"  {len(waivers)} waiver(s) loaded")
+
+    # Run Yosys
     if not quiet:
         click.echo("Running Yosys synthesis...")
-
     try:
         json_netlist = run_yosys(
             file_list, top,
@@ -97,9 +117,6 @@ def main(
 
     if not quiet:
         click.echo(f"Netlist exported to {json_netlist}")
-
-    # Parse netlist
-    if not quiet:
         click.echo("Parsing netlist...")
 
     netlist = Netlist.from_json(json_netlist)
@@ -109,19 +126,22 @@ def main(
             f"Found {len(netlist.flip_flops)} flip-flops, "
             f"{len(netlist.cells)} total cells"
         )
-
-    # Run CDC analysis
-    if not quiet:
-        click.echo("Running CDC analysis...")
+        click.echo("Running CDC/RDC analysis...")
         click.echo()
 
-    report = analyze_cdc(netlist, sdc=sdc)
+    # Run analysis
+    report = analyze_cdc(
+        netlist,
+        sdc=sdc,
+        waivers=waivers,
+        max_reconvergence_depth=max_recon_depth,
+        skip_rdc=no_rdc,
+    )
 
-    # Output report
+    # Output
     text = format_text_report(report)
     click.echo(text)
 
-    # Write JSON report if requested
     if json_path:
         json_data = format_json_report(report)
         with open(json_path, "w") as f:
@@ -129,6 +149,5 @@ def main(
         if not quiet:
             click.echo(f"\nJSON report written to {json_path}")
 
-    # Exit code: non-zero if errors found
     if report.error_count > 0:
         sys.exit(1)

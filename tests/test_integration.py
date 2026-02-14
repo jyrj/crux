@@ -160,6 +160,96 @@ class TestSDCParser:
         assert sdc.are_clocks_related("clk_main", "clk_usb") is False
 
 
+class TestReconvergenceUnsafe:
+    """reconvergence_unsafe.v: direct reconvergence should be WARNING."""
+
+    def test_detects_reconvergence(self):
+        report = _run_analysis("reconvergence_unsafe.v", "reconvergence_unsafe")
+        rules = {v.rule for v in report.violations}
+        assert ViolationType.RECONVERGENCE in rules
+
+    def test_warning_severity(self):
+        report = _run_analysis("reconvergence_unsafe.v", "reconvergence_unsafe")
+        recon = [v for v in report.violations if v.rule == ViolationType.RECONVERGENCE]
+        assert len(recon) >= 1
+        from crux.cdc_check import Severity
+        assert recon[0].severity == Severity.WARNING
+
+    def test_both_crossings_synchronized(self):
+        report = _run_analysis("reconvergence_unsafe.v", "reconvergence_unsafe")
+        assert report.error_count == 0  # No errors, only warning
+
+
+class TestReconvergenceMux:
+    """reconvergence_mux.v: MUX-based reconvergence should be INFO."""
+
+    def test_detects_mux_reconvergence(self):
+        report = _run_analysis("reconvergence_mux.v", "reconvergence_mux")
+        recon = [v for v in report.violations if v.rule == ViolationType.RECONVERGENCE]
+        assert len(recon) >= 1
+        from crux.cdc_check import Severity
+        assert recon[0].severity == Severity.INFO
+
+    def test_no_errors_or_warnings(self):
+        report = _run_analysis("reconvergence_mux.v", "reconvergence_mux")
+        assert report.error_count == 0
+        assert report.warning_count == 0
+
+
+class TestRDCMissingSync:
+    """rdc_missing_sync.v: unsynchronized reset from different domain."""
+
+    def test_detects_rdc_violation(self):
+        report = _run_analysis("rdc_missing_sync.v", "rdc_missing_sync")
+        rules = {v.rule for v in report.violations}
+        assert ViolationType.RESET_DOMAIN_CROSSING in rules
+
+    def test_error_severity(self):
+        report = _run_analysis("rdc_missing_sync.v", "rdc_missing_sync")
+        assert report.error_count >= 1
+
+
+class TestRDCProperSync:
+    """rdc_proper_sync.v: properly synchronized reset should pass clean."""
+
+    def test_no_violations(self):
+        report = _run_analysis("rdc_proper_sync.v", "rdc_proper_sync")
+        assert report.error_count == 0
+        assert report.warning_count == 0
+
+
+class TestWaivers:
+    """Test waiver system with realistic_soc design."""
+
+    def test_waiver_suppresses_violation(self):
+        from crux.sdc_parser import parse_sdc
+        from crux.waivers import load_waivers
+        verilog = str(DESIGNS / "realistic_soc.v")
+        sdc = parse_sdc(DESIGNS.parent / "constraints" / "realistic_soc.sdc")
+        waivers = load_waivers(DESIGNS.parent / "waivers" / "realistic_soc.yaml")
+        json_path = run_yosys([verilog], "realistic_soc")
+        netlist = Netlist.from_json(json_path)
+        report = analyze_cdc(netlist, sdc=sdc, waivers=waivers)
+        # MULTI_BIT_CDC should be waived
+        active_rules = {v.rule for v in report.violations}
+        assert ViolationType.MULTI_BIT_CDC not in active_rules
+        assert len(report.waived_violations) == 1
+        assert report.waived_violations[0][1].reason == "quasi-static register, read only during idle"
+
+    def test_non_waived_still_flagged(self):
+        from crux.sdc_parser import parse_sdc
+        from crux.waivers import load_waivers
+        verilog = str(DESIGNS / "realistic_soc.v")
+        sdc = parse_sdc(DESIGNS.parent / "constraints" / "realistic_soc.sdc")
+        waivers = load_waivers(DESIGNS.parent / "waivers" / "realistic_soc.yaml")
+        json_path = run_yosys([verilog], "realistic_soc")
+        netlist = Netlist.from_json(json_path)
+        report = analyze_cdc(netlist, sdc=sdc, waivers=waivers)
+        # MISSING_SYNC should still be there
+        active_rules = {v.rule for v in report.violations}
+        assert ViolationType.MISSING_SYNC in active_rules
+
+
 class TestJSONReport:
     """Verify JSON report structure."""
 

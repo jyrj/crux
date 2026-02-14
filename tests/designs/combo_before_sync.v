@@ -1,7 +1,4 @@
-// combo_before_sync.v - Combinational logic before synchronizer (MUST flag)
-// A signal from clk_a passes through combinational logic before
-// reaching a synchronizer in clk_b domain. The combo logic can
-// produce glitches that the synchronizer may capture incorrectly.
+// Combo logic (AND gate) on CDC path before synchronizer
 
 module combo_before_sync (
     input  wire clk_a,
