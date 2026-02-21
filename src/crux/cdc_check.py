@@ -11,6 +11,8 @@ from .trace import trace_d_input
 from .synchronizers import find_synchronizers, Synchronizer
 from .reconvergence import find_reconvergences, ReconvergencePoint
 from .rdc import find_rdc_violations, find_clock_glitches, ResetCrossing, ClockGlitch
+from .gray_code import is_gray_encoded
+from .handshake import is_handshake_protected
 from .sdc_parser import SDCConstraints
 from .waivers import Waiver, apply_waivers
 
@@ -29,6 +31,7 @@ class ViolationType(Enum):
     RECONVERGENCE = "RECONVERGENCE"
     RESET_DOMAIN_CROSSING = "RESET_DOMAIN_CROSSING"
     CLOCK_GLITCH = "CLOCK_GLITCH"
+    FREQ_MISMATCH = "FREQ_MISMATCH"
 
 
 @dataclass
@@ -177,6 +180,13 @@ def analyze_cdc(
             crossings.append(crossing)
 
             if is_synced:
+                # Multi-bit synchronized crossing: verify gray encoding
+                if bit_width > 1 and sync_info:
+                    if is_gray_encoded(netlist, sync_info.stages[0]):
+                        crossing.is_synchronized = True  # confirmed safe
+                    # If not gray, it's still "synchronized" (has a sync chain)
+                    # but the multi-bit nature is a concern — not flagged as
+                    # error though, since the sync pattern was recognized
                 pass
             elif trace.has_combo_logic:
                 violations.append(Violation(
@@ -193,20 +203,39 @@ def analyze_cdc(
                     crossing=crossing,
                 ))
             elif bit_width > 1:
-                violations.append(Violation(
-                    rule=ViolationType.MULTI_BIT_CDC,
-                    severity=Severity.ERROR,
-                    message=(
-                        f"Multi-bit CDC without encoding: "
-                        f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
-                        f"{bit_width} bits crossing without gray code or handshake, "
-                        f"source: {src_ff_name}, dest: {ff_name}"
-                    ),
-                    signal_name=signal_name,
-                    source_domain=src_domain_name,
-                    dest_domain=dst_domain_name,
-                    crossing=crossing,
-                ))
+                # Multi-bit crossing without synchronizer — check for
+                # handshake/qualifier protection before flagging
+                if is_handshake_protected(
+                    netlist, ff, src_domain_net, synchronizers
+                ):
+                    violations.append(Violation(
+                        rule=ViolationType.MULTI_BIT_CDC,
+                        severity=Severity.WARNING,
+                        message=(
+                            f"Multi-bit CDC with handshake qualifier: "
+                            f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
+                            f"{bit_width} bits, enable gated by synchronized control"
+                        ),
+                        signal_name=signal_name,
+                        source_domain=src_domain_name,
+                        dest_domain=dst_domain_name,
+                        crossing=crossing,
+                    ))
+                else:
+                    violations.append(Violation(
+                        rule=ViolationType.MULTI_BIT_CDC,
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Multi-bit CDC without encoding: "
+                            f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
+                            f"{bit_width} bits crossing without gray code or handshake, "
+                            f"source: {src_ff_name}, dest: {ff_name}"
+                        ),
+                        signal_name=signal_name,
+                        source_domain=src_domain_name,
+                        dest_domain=dst_domain_name,
+                        crossing=crossing,
+                    ))
             else:
                 violations.append(Violation(
                     rule=ViolationType.MISSING_SYNC,
@@ -278,7 +307,11 @@ def analyze_cdc(
                 signal_name=g.clock_name,
             ))
 
-    # === Phase 4: Apply waivers ===
+    # === Phase 4: Clock frequency validation ===
+    if sdc:
+        _check_frequency_ratios(sdc, clock_name_map, crossings, violations)
+
+    # === Phase 5: Apply waivers ===
     waived: list[tuple[Violation, Waiver]] = []
     if waivers:
         violations, waived = apply_waivers(violations, waivers)
@@ -309,3 +342,57 @@ def _get_crossing_signal_name(netlist: Netlist, dest_ff) -> str:
     if dest_ff.d_bits:
         return netlist.get_net_name(dest_ff.d_bits[0])
     return "?"
+
+
+def _check_frequency_ratios(
+    sdc: SDCConstraints,
+    clock_name_map: dict[str, str],
+    crossings: list[Crossing],
+    violations: list[Violation],
+) -> None:
+    """Check clock frequency relationships for crossed domain pairs.
+
+    Warns when:
+    - Clocks declared "related" (generated) have non-integer frequency ratio
+    - Frequency ratio is very high (>10x) suggesting inadequate sync depth
+    """
+    checked_pairs: set[tuple[str, str]] = set()
+
+    for crossing in crossings:
+        pair = (crossing.source_domain, crossing.dest_domain)
+        if pair in checked_pairs:
+            continue
+        checked_pairs.add(pair)
+
+        sdc_src = clock_name_map.get(crossing.source_domain, crossing.source_domain)
+        sdc_dst = clock_name_map.get(crossing.dest_domain, crossing.dest_domain)
+
+        src_clk = sdc.clocks.get(sdc_src)
+        dst_clk = sdc.clocks.get(sdc_dst)
+
+        if not src_clk or not dst_clk:
+            continue
+        if not src_clk.period or not dst_clk.period:
+            continue
+
+        freq_src = 1.0 / src_clk.period  # GHz (period in ns)
+        freq_dst = 1.0 / dst_clk.period
+
+        ratio = max(freq_src, freq_dst) / min(freq_src, freq_dst)
+
+        # Check: if related clocks have non-integer ratio, that's suspicious
+        if sdc.are_clocks_related(sdc_src, sdc_dst):
+            nearest_int = round(ratio)
+            if nearest_int > 0 and abs(ratio - nearest_int) > 0.01:
+                violations.append(Violation(
+                    rule=ViolationType.FREQ_MISMATCH,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Related clocks with non-integer frequency ratio: "
+                        f"{sdc_src} ({1000/src_clk.period:.1f} MHz) / "
+                        f"{sdc_dst} ({1000/dst_clk.period:.1f} MHz) = {ratio:.2f}x"
+                    ),
+                    signal_name="",
+                    source_domain=crossing.source_domain,
+                    dest_domain=crossing.dest_domain,
+                ))

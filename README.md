@@ -2,44 +2,52 @@
 
 Open-source CDC (Clock Domain Crossing) and RDC (Reset Domain Crossing) static analysis engine built on [Yosys](https://github.com/YosysHQ/yosys).
 
-No open-source CDC/RDC tool exists in the EDA ecosystem. The only alternatives are commercial tools costing six figures annually (Synopsys SpyGlass CDC, Siemens Questa CDC, Cadence Meridian CDC). Crux fills this gap.
+No production-quality open-source CDC/RDC tool exists. The closest prior art is `cdc_snitch` (~282 lines). Crux is a structural analysis tool — it does not do formal verification or simulation-based CDC checking.
 
-## What it does
-
-```
-Verilog/SystemVerilog → Yosys (flatten + explicit FFs) → Crux analysis → CDC/RDC report
-```
 
 ```mermaid
 graph LR
-    A[RTL Sources<br/>.v / .sv] --> B[Yosys<br/>+ yosys-slang]
-    C[SDC Constraints] --> D
-    B --> |JSON netlist| D[Crux Engine]
-    E[Waivers<br/>.yaml] --> D
-    D --> F[Clock Domain<br/>Identification]
-    F --> G[Synchronizer<br/>Detection]
-    G --> H[CDC Crossing<br/>Analysis]
-    H --> I[Reconvergence<br/>Analysis]
-    I --> J[RDC Analysis]
-    J --> K[Report<br/>text + JSON]
+    A[RTL<br/>.v / .sv] --> B[Yosys<br/>+ yosys-slang]
+    C[SDC] --> D
+    B --> |JSON netlist| D[Crux]
+    E[Waivers] --> D
+    D --> F[Domain ID]
+    F --> G[Sync Detection]
+    G --> H[CDC Check]
+    H --> I[Reconvergence]
+    I --> J[RDC + Glitch]
+    J --> K[Gray/Handshake]
+    K --> L[Report]
 ```
 
-### Violation types
+## What it detects
 
-| Rule | Severity | Description |
-|------|----------|-------------|
-| `MISSING_SYNC` | error | Signal crosses clock domain without synchronizer |
-| `COMBO_BEFORE_SYNC` | error | Combinational logic on CDC path before sync stage |
-| `MULTI_BIT_CDC` | error | Multi-bit bus crossing without gray code or handshake |
-| `RECONVERGENCE` | warn/info | Independently synchronized paths reconverge downstream |
-| `RESET_DOMAIN_CROSSING` | error | Async reset from different domain without reset synchronizer |
-| `CLOCK_GLITCH` | error | Combinational logic driving a clock input |
+| Rule | Severity | What |
+|------|----------|------|
+| `MISSING_SYNC` | error | Signal crosses domain without synchronizer |
+| `COMBO_BEFORE_SYNC` | error | Combo logic on CDC path before sync FF |
+| `MULTI_BIT_CDC` | error/warn | Multi-bit crossing: error if unprotected, warning if handshake-gated |
+| `RECONVERGENCE` | warn/info | Independently synced paths reconverge (info if through MUX) |
+| `RESET_DOMAIN_CROSSING` | error | Async reset from different domain without sync |
+| `CLOCK_GLITCH` | error | Combo logic driving clock (recognizes glitch-free mux pattern) |
+| `FREQ_MISMATCH` | warning | Related clocks with non-integer frequency ratio |
 
-### Synchronizer recognition
+## What it recognizes as safe
 
-- N-FF chains (2FF, 3FF) — structural pattern matching
-- Known modules — `prim_flop_2sync`, `prim_pulse_sync`, `prim_fifo_async`, `prim_sync_reqack`, PULP CDC cells
-- Reset sync — "async assert, sync de-assert" pattern (prim_rst_sync)
+- N-FF synchronizer chains (2FF, 3FF) via structural fan-out analysis
+- Known CDC modules (`prim_flop_2sync`, `prim_pulse_sync`, `prim_fifo_async`, `prim_sync_reqack`, PULP cells) via flattened hierarchy name matching
+- Gray-coded buses: verifies XOR-shift pattern (`gray = bin ^ (bin >> 1)`) in Yosys netlist
+- Handshake-protected multi-bit crossings: traces `$adffe` enable to synchronized control signal
+- Reset sync stages: "async assert, sync de-assert" pattern (Q drives same-domain FF ARST)
+- Glitch-free clock mux: AND-OR tree with negedge-clocked select FFs
+
+## What it does NOT do
+
+- Formal verification of CDC protocols
+- Metastability MTBF calculation (needs technology library data)
+- Simulation-based CDC checking
+- Hierarchical analysis (requires flattened design)
+- Full Accellera CDC/RDC Standard 1.0 support (planned)
 
 ## Install
 
@@ -48,77 +56,59 @@ pip install -e .
 ```
 
 Requires Yosys >= 0.40 (`dnf install yosys` / `apt install yosys`).
-For SystemVerilog, build the yosys-slang plugin: `make yosys-slang` (needs `yosys-devel cmake ninja-build`).
+For SystemVerilog: `make yosys-slang` (needs `yosys-devel cmake ninja-build`).
 
 ## Usage
 
-### Catch a missing synchronizer
+### Missing synchronizer
 
 ```
 $ crux --top simple_cdc tests/designs/simple_cdc.v
 
-============================================================
-  Crux CDC/RDC Analysis Report
-============================================================
-
-  Design:   simple_cdc
-  Version:  crux 0.1.0
-
 Clock Domains:
-----------------------------------------
   clk_a                   1 FFs  (posedge)
   clk_b                   1 FFs  (posedge)
 
 Domain Crossings:
-------------------------------------------------------------
   clk_a -> clk_b: 1 signal(s), 0 synchronized, 1 VIOLATION(S)
 
 Violations:
-------------------------------------------------------------
-  1. [ERROR] [MISSING_SYNC] Missing synchronizer: 'data_a' (clk_a -> clk_b), source: $procdff$14, dest: $procdff$9
-     Signal: data_a
-     Path:   clk_a -> clk_b
-
-============================================================
-  Total crossings:  1
-  Synchronized:     0
-  Errors:           1
-  Warnings:         0
-============================================================
+  1. [ERROR] [MISSING_SYNC] Missing synchronizer: 'data_a' (clk_a -> clk_b)
 ```
 
-### Multi-domain SoC with SDC constraints
-
-A 3-clock design with pulse sync, missing sync, and multi-bit CDC bugs:
+### 3-domain SoC with handshake + real bug
 
 ```
-$ crux --top realistic_soc --sdc tests/constraints/realistic_soc.sdc tests/designs/realistic_soc.v
+$ crux --top soc_subsystem --sdc tests/constraints/engineer_scenario.sdc tests/designs/engineer_scenario.v
 
 Clock Domains:
-----------------------------------------
-  aon_clk                 4 FFs  (posedge)
-  io_clk                  4 FFs  (posedge)
-  sys_clk                 3 FFs  (posedge)
+  clk_dma                 5 FFs  (posedge)
+  clk_per                 5 FFs  (posedge)
+  clk_sys                 7 FFs  (posedge)
 
 Domain Crossings:
-------------------------------------------------------------
-  sys_clk -> aon_clk: 1 signal(s), 0 synchronized, 1 VIOLATION(S)
-  sys_clk -> io_clk: 2 signal(s), 1 synchronized, 1 VIOLATION(S)
+  clk_dma -> clk_sys: 1 signal(s), 1 synchronized, OK
+  clk_per -> clk_dma: 1 signal(s), 0 synchronized, 1 VIOLATION(S)
+  clk_per -> clk_sys: 1 signal(s), 1 synchronized, OK
+  clk_sys -> clk_dma: 2 signal(s), 1 synchronized, 1 VIOLATION(S)
+  clk_sys -> clk_per: 1 signal(s), 1 synchronized, OK
 
 Violations:
-------------------------------------------------------------
-  1. [ERROR] [MULTI_BIT_CDC] Multi-bit CDC without encoding: 'sys_status' (sys_clk -> io_clk),
-     8 bits crossing without gray code or handshake
-  2. [ERROR] [MISSING_SYNC] Missing synchronizer: 'sys_status' (sys_clk -> aon_clk)
+  1. [WARN ] [MULTI_BIT_CDC] Multi-bit CDC with handshake qualifier:
+     'dma_data' (clk_sys -> clk_dma), 8 bits, enable gated by synchronized control
+  2. [ERROR] [MULTI_BIT_CDC] Multi-bit CDC without encoding:
+     'spi_cmd_per' (clk_per -> clk_dma), 4 bits without gray code or handshake
 
 Synchronized Crossings:
-------------------------------------------------------------
-  u_uart_pulse_sync.u_sync.d_i: sys_clk -> io_clk [nff_chain, 2-stage]
+  uart_ack: clk_per -> clk_sys [nff_chain, 2-stage]
+  uart_pending: clk_sys -> clk_per [nff_chain, 2-stage]
+  dma_ack: clk_dma -> clk_sys [nff_chain, 2-stage]
+  dma_req: clk_sys -> clk_dma [nff_chain, 2-stage]
 ```
 
-The pulse synchronizer (`prim_pulse_sync` → toggle + 2FF + edge detect) is correctly recognized. The two real bugs are flagged.
+The handshake-protected DMA data is downgraded to warning (enable traces to synced req). The unprotected SPI command is flagged as error.
 
-### Analyze real OpenTitan hardware
+### OpenTitan async FIFO
 
 ```
 $ crux --top prim_fifo_async -I extern/opentitan/hw/ip/prim/rtl -DSYNTHESIS \
@@ -126,50 +116,33 @@ $ crux --top prim_fifo_async -I extern/opentitan/hw/ip/prim/rtl -DSYNTHESIS \
     extern/opentitan/hw/ip/prim_generic/rtl/prim_flop_2sync.sv \
     extern/opentitan/hw/ip/prim/rtl/prim_fifo_async.sv
 
-Clock Domains:
-----------------------------------------
-  clk_rd_i                4 FFs  (posedge)
-  clk_wr_i                5 FFs  (posedge)
-
-Domain Crossings:
-------------------------------------------------------------
-  clk_rd_i -> clk_wr_i: 1 signal(s), 1 synchronized, OK
-  clk_wr_i -> clk_rd_i: 1 signal(s), 1 synchronized, OK
-
-Violations:
-------------------------------------------------------------
-  None.
 Synchronized Crossings:
-------------------------------------------------------------
   fifo_rptr_gray_q: clk_rd_i -> clk_wr_i [nff_chain, 2-stage]
   fifo_wptr_gray_q: clk_wr_i -> clk_rd_i [nff_chain, 2-stage]
+
+Violations: None.
 ```
 
-Zero false positives on OpenTitan's production async FIFO with gray-coded pointers.
-
-### CLI reference
+### CLI
 
 ```
 crux [OPTIONS] VERILOG_FILES...
 
-Options:
-  --top TEXT              Top-level module name (required)
-  --sdc PATH             SDC constraints file
+  --top TEXT              Top module (required)
+  --sdc PATH             SDC constraints
   --waiver PATH          YAML waiver file
-  --json-report PATH     Write JSON report
-  --sv                   Use yosys-slang for SystemVerilog
-  -I PATH                Include directory (repeatable)
-  -D TEXT                Preprocessor define (repeatable)
-  --max-recon-depth INT  Reconvergence trace depth (default: 2)
+  --json-report PATH     JSON output
+  --sv                   SystemVerilog via yosys-slang
+  -I PATH                Include dir (repeatable)
+  -D TEXT                Define (repeatable)
+  --max-recon-depth INT  Reconvergence depth (default: 2)
   --no-rdc               Skip RDC analysis
-  -q / --quiet           Minimal output
-  -v / --verbose         Show Yosys output
-  --version              Show version
+  -q / -v                Quiet / verbose
 ```
 
 ## Validated against real hardware
 
-Tested on OpenTitan CDC primitives with **zero false positives**:
+Tested on OpenTitan CDC primitives — zero false positives:
 
 | Module | Pattern | Crossings | FP |
 |--------|---------|-----------|-----|
@@ -184,18 +157,15 @@ make validate-opentitan   # run crux on all three
 
 ## SDC constraints
 
-Crux uses a real TCL interpreter (not regex) to parse SDC files:
+Parsed via Python's TCL interpreter (handles variables, quoting, control flow):
 
 ```tcl
 create_clock -name clk_main -period 10.0 [get_ports clk_i]
 create_clock -name clk_usb  -period 20.83 [get_ports clk_usb_i]
-create_generated_clock -name clk_div2 -source [get_ports clk_i] -divide_by 2 [get_pins div/out]
 set_clock_groups -asynchronous -group {clk_main} -group {clk_usb}
 ```
 
 ## Waivers
-
-Suppress known-safe violations with YAML waivers:
 
 ```yaml
 waivers:
@@ -205,39 +175,44 @@ waivers:
     reason: "quasi-static, read only during idle"
 ```
 
-## Project structure
+## Project layout
 
 ```
 src/crux/
-├── cli.py              # CLI entry point
-├── yosys_runner.py     # Yosys invocation + JSON export
-├── netlist.py          # Yosys JSON → internal FF/net model
+├── cli.py              # CLI
+├── yosys_runner.py     # Yosys subprocess + script gen
+├── netlist.py          # JSON → FF/net model + driver/fanout indices
 ├── clock_domains.py    # Group FFs by clock
-├── trace.py            # Backward cone tracing
+├── trace.py            # Backward cone DFS
 ├── synchronizers.py    # N-FF chain + known module detection
-├── reconvergence.py    # Forward BFS from sync outputs
-├── rdc.py              # Reset domain crossing + clock glitch
+├── gray_code.py        # XOR-shift pattern verification
+├── handshake.py        # Enable-cone trace to synced qualifier
+├── reconvergence.py    # Forward BFS with sync provenance
+├── rdc.py              # Reset crossing + glitch-free mux detection
 ├── sdc_parser.py       # SDC via TCL interpreter
-├── waivers.py          # YAML waiver matching
-├── cdc_check.py        # Analysis orchestrator
-└── report.py           # Text + JSON reports
+├── waivers.py          # YAML fnmatch waiver matching
+├── cdc_check.py        # Orchestrator (8 violation types)
+└── report.py           # Text + JSON output
 ```
 
 ## Status
 
-Steps 1–3 of 4 complete.
+36 tests. Zero false positives on OpenTitan.
 
-- [x] Core CDC detection (missing sync, combo-before-sync, multi-bit)
-- [x] SDC constraint parsing (real TCL, not regex)
-- [x] Synchronizer pattern library (N-FF, pulse sync, FIFO, handshake, known modules)
-- [x] Reconvergence analysis (forward BFS, mux-aware)
-- [x] RDC analysis (async reset crossing, reset sync pattern recognition)
-- [x] Clock glitch detection
-- [x] YAML waiver system
+- [x] Missing sync, combo-before-sync, multi-bit CDC
+- [x] SDC parsing (TCL interpreter)
+- [x] Sync detection: N-FF chains, known modules, pulse sync
+- [x] Gray code verification (XOR-shift structural match)
+- [x] Handshake/qualifier detection (enable-cone trace)
+- [x] Reconvergence (forward BFS, mux-aware)
+- [x] RDC (async reset crossing, reset sync pattern)
+- [x] Clock glitch (glitch-free mux recognition)
+- [x] Frequency validation
+- [x] YAML waivers
 - [x] SystemVerilog via yosys-slang
-- [ ] Accellera CDC/RDC Standard 1.0 constraint format
-- [ ] Large design scaling (OpenTitan full SoC)
-- [ ] CI integration (GitHub Actions CDC checks)
+- [ ] Accellera CDC/RDC Standard 1.0
+- [ ] Formal CDC protocol verification
+- [ ] Large design scaling
 
 ## License
 

@@ -1,17 +1,7 @@
-"""Reconvergence detection: find where independently synchronized paths meet.
-
-The problem: Signals A and B cross from Domain X to Domain Y through independent
-synchronizers. After synchronization, they reconverge (feed the same downstream
-logic). Even though each signal is individually synchronized, they may arrive at
-different times (0, 1, or 2 cycles apart), causing the downstream logic to see
-an inconsistent state that never existed in the source domain.
-
-Detection algorithm:
-1. Group synchronizers by (src_domain, dst_domain) pair
-2. For pairs with 2+ syncs, forward-trace from each sync's output Q-bits
-3. Track which sync(s) feed each reachable net bit
-4. When a bit is fed by 2+ different syncs → RECONVERGENCE
-5. Classify: through $mux/$pmux → INFO (usually safe), direct → WARNING
+"""Reconvergence detection: forward BFS from sync outputs to find where
+independently synchronized paths meet. Independently synced signals may
+arrive 0-2 cycles apart, so reconvergence can produce states that never
+existed in the source domain. MUX-based reconvergence is usually safe.
 """
 
 from __future__ import annotations

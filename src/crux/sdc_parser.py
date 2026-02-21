@@ -1,12 +1,9 @@
-"""SDC (Synopsys Design Constraints) parser using Python's built-in TCL interpreter.
+"""SDC parser using Python's built-in TCL interpreter.
 
-This is NOT a regex hack - we use a real TCL interpreter to evaluate SDC files,
-which are valid TCL scripts. We register custom command handlers for the SDC
-commands we care about (create_clock, create_generated_clock, set_clock_groups,
-set_false_path) and let TCL handle all the parsing, variable expansion, and
-control flow.
-
-This is the same approach commercial tools use - SDC is TCL by design.
+SDC files are valid TCL. We evaluate them with a real TCL interpreter
+(tkinter.Tcl) and register custom handlers for create_clock,
+create_generated_clock, set_clock_groups, set_false_path. This handles
+variable expansion, quoting, and control flow that regex cannot.
 """
 
 from __future__ import annotations

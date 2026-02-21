@@ -250,6 +250,49 @@ class TestWaivers:
         assert ViolationType.MISSING_SYNC in active_rules
 
 
+class TestGrayCode:
+    """gray_cdc.v: gray-encoded counter should be recognized as safe."""
+
+    def test_no_multi_bit_error(self):
+        report = _run_analysis("gray_cdc.v", "gray_cdc")
+        rules = {v.rule for v in report.violations if v.severity.value == "error"}
+        assert ViolationType.MULTI_BIT_CDC not in rules
+
+    def test_crossing_synchronized(self):
+        report = _run_analysis("gray_cdc.v", "gray_cdc")
+        synced = [c for c in report.crossings if c.is_synchronized]
+        assert len(synced) >= 1
+
+
+class TestHandshake:
+    """handshake_cdc.v: req/ack protected data should be WARNING not ERROR."""
+
+    def test_handshake_downgraded(self):
+        report = _run_analysis("handshake_cdc.v", "handshake_cdc")
+        multi_bit = [v for v in report.violations if v.rule == ViolationType.MULTI_BIT_CDC]
+        assert len(multi_bit) >= 1
+        from crux.cdc_check import Severity
+        assert multi_bit[0].severity == Severity.WARNING
+
+    def test_req_ack_syncs_detected(self):
+        report = _run_analysis("handshake_cdc.v", "handshake_cdc")
+        synced = [c for c in report.crossings if c.is_synchronized]
+        assert len(synced) >= 2  # req sync + ack sync
+
+    def test_no_errors(self):
+        report = _run_analysis("handshake_cdc.v", "handshake_cdc")
+        assert report.error_count == 0
+
+
+class TestClockMuxSafe:
+    """clock_mux_safe.v: glitch-free clock mux should not flag CLOCK_GLITCH."""
+
+    def test_no_clock_glitch(self):
+        report = _run_analysis("clock_mux_safe.v", "clock_mux_safe")
+        rules = {v.rule for v in report.violations}
+        assert ViolationType.CLOCK_GLITCH not in rules
+
+
 class TestJSONReport:
     """Verify JSON report structure."""
 

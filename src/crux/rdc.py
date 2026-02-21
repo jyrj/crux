@@ -117,15 +117,11 @@ def find_rdc_violations(
 
 
 def _find_reset_sync_stages(netlist: Netlist) -> set[str]:
-    """Identify FFs that are part of reset synchronizer chains.
+    """Identify FFs that form reset synchronizer chains.
 
-    A reset sync stage is a FF that:
-    1. Has an async reset from a different clock domain
-    2. Its Q output feeds another FF's ARST (or its own chain continues to one that does)
-
-    This is the "async assert, sync de-assert" pattern (prim_rst_sync).
-    These FFs intentionally have unsynchronized resets and should not be
-    flagged as RDC violations.
+    Detects by topology: FF whose Q drives another same-domain FF's ARST.
+    Assumed to be "async assert, sync de-assert" stages (prim_rst_sync
+    pattern). Suppressed from RDC violations.
     """
     # Build map: which FF Q-bits drive which FF ARST ports?
     q_drives_reset: dict[int, list[str]] = {}  # q_bit -> [ff_names whose ARST it drives]
@@ -286,13 +282,10 @@ def _count_reset_sync_depth(netlist: Netlist, target_ff: FlipFlop) -> int:
 def find_clock_glitches(netlist: Netlist) -> list[ClockGlitch]:
     """Find FFs whose clock input is driven by combinational logic.
 
-    A clock driven by combo logic (MUX, AND, OR, etc.) can produce glitches
-    (runt pulses) that corrupt the clock tree. Safe patterns use dedicated
-    clock mux cells or clock gating cells.
+    Recognizes the glitch-free clock mux pattern (AND-OR with negedge select FFs)
+    and suppresses it. Flags all other combinational logic on clock paths.
     """
     glitches: list[ClockGlitch] = []
-
-    # Collect all unique clock nets
     checked_clocks: set[int] = set()
 
     for ff_name, ff in netlist.flip_flops.items():
@@ -300,26 +293,25 @@ def find_clock_glitches(netlist: Netlist) -> list[ClockGlitch]:
             continue
         checked_clocks.add(ff.clock_net)
 
-        # Check if clock net is a module input port (safe)
         if ff.clock_net in netlist.port_bits:
             continue
 
-        # Check what drives the clock net
         if ff.clock_net not in netlist.driver_index:
-            continue  # Undriven or external
+            continue
 
         cell_name, port_name = netlist.driver_index[ff.clock_net]
         cell_data = netlist.cells.get(cell_name, {})
         cell_type = cell_data.get("type", "")
 
-        # Skip if driven by a FF (unusual but not a glitch)
         if is_dff_type(cell_type):
             continue
 
-        # Combinational logic driving clock - potential glitch
-        clock_name = netlist.get_net_name(ff.clock_net)
+        # Check for glitch-free clock mux pattern:
+        # $or($and(clk_port, negedge_ff.Q), $and(clk_port, negedge_ff.Q))
+        if _is_glitch_free_clock_mux(netlist, ff.clock_net):
+            continue
 
-        # Find all FFs affected by this glitchy clock
+        clock_name = netlist.get_net_name(ff.clock_net)
         for ff2_name, ff2 in netlist.flip_flops.items():
             if ff2.clock_net == ff.clock_net:
                 glitches.append(ClockGlitch(
@@ -329,6 +321,91 @@ def find_clock_glitches(netlist: Netlist) -> list[ClockGlitch]:
                     driver_cell=cell_name,
                     driver_type=cell_type,
                 ))
-                break  # Report once per clock net, not per FF
+                break
 
     return glitches
+
+
+def _is_glitch_free_clock_mux(netlist: Netlist, clock_bit: int) -> bool:
+    """Detect the standard glitch-free clock mux pattern.
+
+    Pattern: clock = $or($and(clk_a, sel_a), $and(clk_b, sel_b))
+    where sel_a and sel_b are negedge-clocked FFs (CLK_POLARITY=0).
+    """
+    if clock_bit not in netlist.driver_index:
+        return False
+
+    or_cell_name, _ = netlist.driver_index[clock_bit]
+    or_cell = netlist.cells.get(or_cell_name, {})
+
+    if or_cell.get("type") != "$or":
+        return False
+
+    or_conn = or_cell.get("connections", {})
+    a_bits = or_conn.get("A", [])
+    b_bits = or_conn.get("B", [])
+
+    # Both OR inputs should come from AND cells
+    if not a_bits or not b_bits:
+        return False
+    a_bit = a_bits[0] if isinstance(a_bits[0], int) else None
+    b_bit = b_bits[0] if isinstance(b_bits[0], int) else None
+
+    if a_bit is None or b_bit is None:
+        return False
+
+    return (
+        _is_clock_and_gate(netlist, a_bit) and
+        _is_clock_and_gate(netlist, b_bit)
+    )
+
+
+def _is_clock_and_gate(netlist: Netlist, bit: int) -> bool:
+    """Check if a bit is driven by $and(clock_port, negedge_ff.Q)."""
+    if bit not in netlist.driver_index:
+        return False
+
+    cell_name, _ = netlist.driver_index[bit]
+    cell = netlist.cells.get(cell_name, {})
+
+    if cell.get("type") != "$and":
+        return False
+
+    conn = cell.get("connections", {})
+    a_bits = conn.get("A", [])
+    b_bits = conn.get("B", [])
+
+    if not a_bits or not b_bits:
+        return False
+
+    a0 = a_bits[0] if isinstance(a_bits[0], int) else None
+    b0 = b_bits[0] if isinstance(b_bits[0], int) else None
+
+    if a0 is None or b0 is None:
+        return False
+
+    # One input should be a clock port, other should be a negedge FF Q
+    port_and_ff = (
+        (_is_clock_port(netlist, a0) and _is_negedge_ff_q(netlist, b0)) or
+        (_is_clock_port(netlist, b0) and _is_negedge_ff_q(netlist, a0))
+    )
+    return port_and_ff
+
+
+def _is_clock_port(netlist: Netlist, bit: int) -> bool:
+    """Check if a bit is directly a module input port."""
+    return bit in netlist.port_bits
+
+
+def _is_negedge_ff_q(netlist: Netlist, bit: int) -> bool:
+    """Check if a bit is the Q output of a negedge-triggered FF."""
+    if bit not in netlist.driver_index:
+        return False
+    cell_name, port_name = netlist.driver_index[bit]
+    cell_data = netlist.cells.get(cell_name, {})
+    if not is_dff_type(cell_data.get("type", "")):
+        return False
+    ff = netlist.flip_flops.get(cell_name)
+    if ff is None:
+        return False
+    return ff.clock_polarity == 0  # negedge
