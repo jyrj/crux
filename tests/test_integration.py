@@ -293,6 +293,47 @@ class TestClockMuxSafe:
         assert ViolationType.CLOCK_GLITCH not in rules
 
 
+class TestAccelleraParser:
+    """Accellera CDC/RDC Standard 1.0 parser."""
+
+    def test_parse_cdcspec(self):
+        from crux.accellera_parser import parse_accellera
+        a = parse_accellera(DESIGNS.parent / "constraints" / "example.cdcspec")
+        assert a.module_name == "gray_cdc"
+        assert len(a.ports) == 4
+        assert a.is_hamming1("gray_out")
+        assert a.get_port_type("clk_a") == "clock"
+        assert a.get_port_type("rst_n") == "async_reset"
+
+    def test_clock_groups(self):
+        from crux.accellera_parser import parse_accellera
+        a = parse_accellera(DESIGNS.parent / "constraints" / "example.cdcspec")
+        assert a.are_clocks_synchronous("clk_a", "clk_b")
+
+
+class TestFormalGeneration:
+    """Formal assertion generation for SymbiYosys."""
+
+    def test_generates_gray_assertion(self):
+        report = _run_analysis("gray_cdc.v", "gray_cdc")
+        from crux.formal import generate_formal_checks
+        sby, wrapper = generate_formal_checks(
+            report, ["tests/designs/gray_cdc.v"], "gray_cdc"
+        )
+        assert "countones" in wrapper
+        assert "smtbmc" in sby
+        assert "multiclock on" in sby
+
+    def test_no_formal_for_clean_design(self):
+        report = _run_analysis("simple_sync.v", "simple_sync")
+        from crux.formal import generate_formal_checks
+        sby, wrapper = generate_formal_checks(
+            report, ["tests/designs/simple_sync.v"], "simple_sync"
+        )
+        # Single-bit sync, no gray code — no assertions generated
+        assert sby == ""
+
+
 class TestJSONReport:
     """Verify JSON report structure."""
 

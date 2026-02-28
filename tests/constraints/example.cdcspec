@@ -1,0 +1,13 @@
+# Accellera CDC/RDC Standard 1.0 example
+accellera_cdc::set_module -name gray_cdc
+
+accellera_cdc::set_port -name clk_a -type clock
+accellera_cdc::set_port -name clk_b -type clock
+accellera_cdc::set_port -name rst_n -type async_reset -polarity low
+
+accellera_cdc::set_port -name gray_out -type data \
+    -associated_from_clocks {clk_a} \
+    -associated_to_clocks {clk_b} \
+    -hamming1 true
+
+accellera_cdc::set_clock_group -clocks {clk_a clk_b}

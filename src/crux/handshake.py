@@ -22,6 +22,16 @@ from .netlist import Netlist, FlipFlop, is_dff_type
 from .synchronizers import Synchronizer
 
 
+def _build_last_stage_index(
+    synchronizers: dict[str, Synchronizer],
+) -> dict[str, Synchronizer]:
+    """Map last-stage FF name -> Synchronizer for O(1) lookup."""
+    index: dict[str, Synchronizer] = {}
+    for sync in synchronizers.values():
+        index[sync.stages[-1].name] = sync
+    return index
+
+
 def is_handshake_protected(
     netlist: Netlist,
     dest_ff: FlipFlop,
@@ -34,7 +44,6 @@ def is_handshake_protected(
     Returns True if the destination FF's enable signal depends on a
     synchronized control signal from the same source domain.
     """
-    # Check if dest FF is an $adffe (FF with enable)
     if dest_ff.cell_type not in ("$adffe", "$sdffe", "$sdffce"):
         return False
 
@@ -45,11 +54,12 @@ def is_handshake_protected(
     if not en_bits:
         return False
 
-    # Trace the EN signal backward to find if it depends on a sync'd control
+    last_stage_idx = _build_last_stage_index(synchronizers)
+
     for en_bit in en_bits:
         if _traces_to_synchronizer(
             netlist, en_bit, dest_ff.clock_net, src_domain_net,
-            synchronizers, set(), max_trace_depth
+            synchronizers, last_stage_idx, set(), max_trace_depth
         ):
             return True
 
@@ -62,14 +72,11 @@ def _traces_to_synchronizer(
     dst_clock_net: int,
     src_domain_net: int,
     synchronizers: dict[str, Synchronizer],
+    last_stage_idx: dict[str, Synchronizer],
     visited: set[int],
     depth: int,
 ) -> bool:
-    """Trace a bit backward to check if it depends on a synchronizer output.
-
-    Specifically checks for a synchronizer crossing from src_domain to the
-    destination domain (dst_clock_net).
-    """
+    """Trace a bit backward to check if it depends on a synchronizer output."""
     if not isinstance(bit_id, int) or bit_id in visited or depth <= 0:
         return False
     visited.add(bit_id)
@@ -85,21 +92,18 @@ def _traces_to_synchronizer(
         ff = netlist.flip_flops.get(cell_name)
         if ff is None:
             return False
-        # Check if this FF is the last stage of a synchronizer
-        # from the same src_domain
+        # Check stage1 index
         if cell_name in synchronizers:
             sync = synchronizers[cell_name]
             if sync.src_domain == src_domain_net and sync.dst_domain == dst_clock_net:
                 return True
-        # Also check: is this FF part of any sync chain as a non-stage1?
-        for sync_name, sync in synchronizers.items():
-            last_stage = sync.stages[-1]
-            if last_stage.name == cell_name:
-                if sync.src_domain == src_domain_net:
-                    return True
-        return False  # FF but not a relevant synchronizer
+        # Check last-stage index (O(1) instead of O(N))
+        if cell_name in last_stage_idx:
+            sync = last_stage_idx[cell_name]
+            if sync.src_domain == src_domain_net:
+                return True
+        return False
 
-    # Combinational cell: trace through all inputs
     pd = cell_data.get("port_directions", {})
     conn = cell_data.get("connections", {})
     for p_name, direction in pd.items():
@@ -107,7 +111,7 @@ def _traces_to_synchronizer(
             for input_bit in conn.get(p_name, []):
                 if _traces_to_synchronizer(
                     netlist, input_bit, dst_clock_net, src_domain_net,
-                    synchronizers, visited, depth - 1
+                    synchronizers, last_stage_idx, visited, depth - 1
                 ):
                     return True
 

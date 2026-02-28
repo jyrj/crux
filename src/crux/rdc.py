@@ -146,26 +146,24 @@ def _find_reset_sync_stages(netlist: Netlist) -> set[str]:
                         # → it's a reset sync stage
                         reset_sync_ffs.add(ff_name)
 
-    # Also add the first stage: FFs in the same domain whose Q feeds
-    # another FF that we already identified as a reset sync stage
-    # (handles multi-stage chains)
-    changed = True
-    while changed:
-        changed = False
-        for ff_name, ff in netlist.flip_flops.items():
-            if ff_name in reset_sync_ffs:
+    # Worklist: propagate backward through chains. If FF.Q feeds D of a
+    # known reset sync stage (same domain), FF is also a reset sync stage.
+    worklist = list(reset_sync_ffs)
+    while worklist:
+        known_name = worklist.pop()
+        known_ff = netlist.flip_flops.get(known_name)
+        if known_ff is None:
+            continue
+        for d_bit in known_ff.d_bits:
+            if not isinstance(d_bit, int) or d_bit not in netlist.driver_index:
                 continue
-            if not has_async_reset(ff):
+            src_cell, src_port = netlist.driver_index[d_bit]
+            if src_cell in reset_sync_ffs or src_cell not in netlist.flip_flops:
                 continue
-            for q_bit in ff.q_bits:
-                readers = netlist.fanout_index.get(q_bit, [])
-                for reader_cell, reader_port in readers:
-                    if reader_port == "D" and reader_cell in reset_sync_ffs:
-                        # Q feeds a D input of a known reset sync stage
-                        if reader_cell in netlist.flip_flops:
-                            if netlist.flip_flops[reader_cell].clock_net == ff.clock_net:
-                                reset_sync_ffs.add(ff_name)
-                                changed = True
+            src_ff = netlist.flip_flops[src_cell]
+            if src_ff.clock_net == known_ff.clock_net and has_async_reset(src_ff):
+                reset_sync_ffs.add(src_cell)
+                worklist.append(src_cell)
 
     return reset_sync_ffs
 

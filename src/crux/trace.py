@@ -6,22 +6,28 @@ from dataclasses import dataclass
 
 from .netlist import Netlist, FlipFlop, is_dff_type
 
+MAX_TRACE_DEPTH = 500
+
 
 @dataclass
 class TraceResult:
     """Result of tracing a destination FF's D-input backward."""
     dest_ff: FlipFlop
-    source_ffs: list[FlipFlop]      # Source FFs from other domains
-    source_domains: set[int]        # Clock net IDs of source FFs
-    has_combo_logic: bool           # Combinational logic in the path?
-    is_from_input: bool             # Path originates from module input?
+    source_ffs: list[FlipFlop]
+    source_domains: set[int]
+    has_combo_logic: bool
+    is_from_input: bool
 
 
-def trace_d_input(netlist: Netlist, dest_ff: FlipFlop) -> TraceResult:
+def trace_d_input(
+    netlist: Netlist,
+    dest_ff: FlipFlop,
+    memo: dict[int, tuple[set[int], bool, bool]] | None = None,
+) -> TraceResult:
     """Trace backward from a FF's D input to find all source FFs and domains.
 
-    Walks backward through combinational logic, stopping at FF Q outputs
-    (recording the source domain) or module inputs.
+    Optionally accepts a memo dict to cache per-bit results across calls.
+    Cache key: bit_id -> (source_domains, has_combo, is_from_input).
     """
     source_ffs_out: list[FlipFlop] = []
     source_domains_out: set[int] = set()
@@ -30,11 +36,26 @@ def trace_d_input(netlist: Netlist, dest_ff: FlipFlop) -> TraceResult:
     visited: set[int] = set()
 
     for d_bit in dest_ff.d_bits:
-        combo, from_input = _trace_bit_full(
-            netlist, d_bit, visited, source_ffs_out, source_domains_out, depth=0
+        if memo is not None and d_bit in memo:
+            cached_doms, cached_combo, cached_input = memo[d_bit]
+            source_domains_out |= cached_doms
+            has_combo_out = has_combo_out or cached_combo
+            is_from_input_out = is_from_input_out or cached_input
+            continue
+
+        local_ffs: list[FlipFlop] = []
+        local_doms: set[int] = set()
+        combo, from_input = _trace_bit(
+            netlist, d_bit, visited, local_ffs, local_doms, depth=0
         )
+
+        source_ffs_out.extend(local_ffs)
+        source_domains_out |= local_doms
         has_combo_out = has_combo_out or combo
         is_from_input_out = is_from_input_out or from_input
+
+        if memo is not None:
+            memo[d_bit] = (frozenset(local_doms), combo, from_input)
 
     return TraceResult(
         dest_ff=dest_ff,
@@ -45,7 +66,7 @@ def trace_d_input(netlist: Netlist, dest_ff: FlipFlop) -> TraceResult:
     )
 
 
-def _trace_bit_full(
+def _trace_bit(
     netlist: Netlist,
     bit_id: int,
     visited: set[int],
@@ -53,35 +74,25 @@ def _trace_bit_full(
     source_domains: set[int],
     depth: int,
 ) -> tuple[bool, bool]:
-    """Trace a single net bit backward. Returns (has_combo, is_from_input).
-
-    Stops at:
-    - FF Q outputs: records the source FF and its clock domain
-    - Module inputs: records as input-domain crossing
-    - Already-visited bits: breaks cycles
-    - Constant values (strings like "0", "1"): ignored
-    """
+    """Trace a single net bit backward. Returns (has_combo, is_from_input)."""
     if not isinstance(bit_id, int):
         return False, False
-
     if bit_id in visited:
+        return False, False
+    if depth > MAX_TRACE_DEPTH:
         return False, False
     visited.add(bit_id)
 
-    # Check if this bit is a module input port
     if bit_id in netlist.port_bits:
-        # Check if it's also driven by a cell (port loopback)
         if bit_id not in netlist.driver_index:
-            return False, True  # Pure module input
+            return False, True
 
-    # Check if this bit is driven by a cell
     if bit_id not in netlist.driver_index:
-        return False, False  # Undriven net
+        return False, False
 
     cell_name, port_name = netlist.driver_index[bit_id]
     cell_data = netlist.cells[cell_name]
 
-    # If the driver is a FF, we've found a source domain
     if is_dff_type(cell_data["type"]):
         if cell_name in netlist.flip_flops:
             ff = netlist.flip_flops[cell_name]
@@ -89,17 +100,15 @@ def _trace_bit_full(
             source_domains.add(ff.clock_net)
         return False, False
 
-    # Driver is combinational logic - trace through all its inputs
     has_combo = True
     is_from_input = False
-
     pd = cell_data.get("port_directions", {})
     conn = cell_data.get("connections", {})
 
     for p_name, direction in pd.items():
         if direction == "input":
             for input_bit in conn.get(p_name, []):
-                combo, from_inp = _trace_bit_full(
+                combo, from_inp = _trace_bit(
                     netlist, input_bit, visited, source_ffs, source_domains,
                     depth=depth + 1,
                 )

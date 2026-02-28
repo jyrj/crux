@@ -34,6 +34,10 @@ from .report import format_text_report, format_json_report
               help="Include directory for `include resolution (repeatable)")
 @click.option("-D", "--define", "defines", multiple=True,
               help="Preprocessor define (repeatable, e.g. -DSYNTHESIS)")
+@click.option("--accellera", "accellera_path", type=click.Path(exists=True), default=None,
+              help="Accellera CDC/RDC Standard 1.0 constraint file")
+@click.option("--formal", "formal_dir", type=click.Path(), default=None,
+              help="Generate SymbiYosys formal checks in this directory")
 @click.option("--max-recon-depth", type=int, default=2,
               help="Max FF levels to trace for reconvergence (default: 2)")
 @click.option("--no-rdc", is_flag=True, help="Skip reset domain crossing analysis")
@@ -50,6 +54,8 @@ def main(
     use_slang: bool,
     include_dirs: tuple[str, ...],
     defines: tuple[str, ...],
+    accellera_path: str | None,
+    formal_dir: str | None,
     max_recon_depth: int,
     no_rdc: bool,
     quiet: bool,
@@ -75,7 +81,22 @@ def main(
             click.echo(f"SDC constraints: {sdc_path}")
         if waiver_path:
             click.echo(f"Waivers: {waiver_path}")
+        if accellera_path:
+            click.echo(f"Accellera CDC: {accellera_path}")
         click.echo()
+
+    # Parse Accellera CDC constraints
+    if accellera_path:
+        if not quiet:
+            click.echo("Parsing Accellera CDC constraints...")
+        from .accellera_parser import parse_accellera
+        accellera = parse_accellera(accellera_path)
+        if not quiet:
+            click.echo(
+                f"  Module: {accellera.module_name}, "
+                f"{len(accellera.ports)} port(s), "
+                f"{len(accellera.clock_groups)} clock group(s)"
+            )
 
     # Parse SDC constraints
     sdc: SDCConstraints | None = None
@@ -148,6 +169,17 @@ def main(
             json.dump(json_data, f, indent=2)
         if not quiet:
             click.echo(f"\nJSON report written to {json_path}")
+
+    # Generate formal verification files
+    if formal_dir:
+        from .formal import write_formal_output
+        generated = write_formal_output(report, file_list, top, formal_dir)
+        if generated:
+            if not quiet:
+                click.echo(f"\nFormal checks written to: {', '.join(generated)}")
+        else:
+            if not quiet:
+                click.echo("\nNo formal checks generated (no suitable crossings found)")
 
     if report.error_count > 0:
         sys.exit(1)

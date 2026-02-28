@@ -175,6 +175,32 @@ waivers:
     reason: "quasi-static, read only during idle"
 ```
 
+## Accellera CDC/RDC Standard 1.0
+
+Parses the vendor-neutral constraint format (released March 2026):
+
+```tcl
+accellera_cdc::set_module -name my_ip
+accellera_cdc::set_port -name data_o -type data -associated_to_clocks {clk_dst} -hamming1 true
+accellera_cdc::set_port -name rst_n -type async_reset -polarity low
+accellera_cdc::set_clock_group -clocks {clk_a clk_b}
+```
+
+```bash
+crux --top my_ip --accellera constraints.cdcspec rtl/*.sv
+```
+
+## Formal verification bridge
+
+Generates SymbiYosys-compatible assertions from structural findings:
+
+```bash
+crux --top gray_cdc --formal ./formal_out tests/designs/gray_cdc.v
+sby formal_out/gray_cdc_cdc.sby    # run with SymbiYosys (optional)
+```
+
+Generated checks include gray-code `$countones` assertions and handshake data-stability properties. This bridges structural CDC analysis to formal verification — not a replacement for commercial formal CDC, but covers the highest-value checks.
+
 ## Project layout
 
 ```
@@ -183,13 +209,15 @@ src/crux/
 ├── yosys_runner.py     # Yosys subprocess + script gen
 ├── netlist.py          # JSON → FF/net model + driver/fanout indices
 ├── clock_domains.py    # Group FFs by clock
-├── trace.py            # Backward cone DFS
+├── trace.py            # Backward cone DFS (memoized)
 ├── synchronizers.py    # N-FF chain + known module detection
 ├── gray_code.py        # XOR-shift pattern verification
 ├── handshake.py        # Enable-cone trace to synced qualifier
 ├── reconvergence.py    # Forward BFS with sync provenance
 ├── rdc.py              # Reset crossing + glitch-free mux detection
 ├── sdc_parser.py       # SDC via TCL interpreter
+├── accellera_parser.py # Accellera CDC/RDC Standard 1.0
+├── formal.py           # SymbiYosys assertion generator
 ├── waivers.py          # YAML fnmatch waiver matching
 ├── cdc_check.py        # Orchestrator (8 violation types)
 └── report.py           # Text + JSON output
@@ -197,7 +225,7 @@ src/crux/
 
 ## Status
 
-36 tests. Zero false positives on OpenTitan.
+40 tests. Zero false positives on OpenTitan.
 
 - [x] Missing sync, combo-before-sync, multi-bit CDC
 - [x] SDC parsing (TCL interpreter)
@@ -210,9 +238,9 @@ src/crux/
 - [x] Frequency validation
 - [x] YAML waivers
 - [x] SystemVerilog via yosys-slang
-- [ ] Accellera CDC/RDC Standard 1.0
-- [ ] Formal CDC protocol verification
-- [ ] Large design scaling
+- [x] Accellera CDC/RDC Standard 1.0 parser
+- [x] Formal CDC assertion generation (SymbiYosys bridge)
+- [x] Scaling: trace memoization, deque BFS, worklist algorithms
 
 ## License
 

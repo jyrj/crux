@@ -138,10 +138,11 @@ def analyze_cdc(
 
     crossings: list[Crossing] = []
     violations: list[Violation] = []
+    trace_memo: dict[int, tuple[set[int], bool, bool]] = {}
 
     # === Phase 1: CDC crossing analysis ===
     for ff_name, ff in netlist.flip_flops.items():
-        trace = trace_d_input(netlist, ff)
+        trace = trace_d_input(netlist, ff, memo=trace_memo)
         cross_domains = trace.source_domains - {ff.clock_net}
         if not cross_domains:
             continue

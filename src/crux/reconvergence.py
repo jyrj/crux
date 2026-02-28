@@ -6,7 +6,7 @@ existed in the source domain. MUX-based reconvergence is usually safe.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from .netlist import Netlist, FlipFlop, is_dff_type, MUX_TYPES
@@ -88,7 +88,7 @@ def _trace_domain_pair(
     reach: dict[int, tuple[set[str], bool]] = {}
 
     # BFS state: (bit_id, sync_id, ff_depth, through_mux)
-    queue: list[tuple[int, str, int, bool]] = []
+    queue: deque[tuple[int, str, int, bool]] = deque()
 
     # Seed: output Q-bits of each sync's last stage
     for sync in syncs:
@@ -100,7 +100,7 @@ def _trace_domain_pair(
     visited_edges: set[tuple[int, str]] = set()  # (bit_id, sync_id) to avoid re-tracing
 
     while queue:
-        bit_id, sync_id, ff_depth, through_mux = queue.pop(0)
+        bit_id, sync_id, ff_depth, through_mux = queue.popleft()
 
         if not isinstance(bit_id, int):
             continue
