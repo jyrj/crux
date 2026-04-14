@@ -1,0 +1,264 @@
+{
+  "triage": [
+    {
+      "crux_signal": "$procmux$1413_Y",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal to prim_reg_cdc_arb (gen_wr_req) for u_wkup_cause_cdc. The combinational logic is in the destination (clk_aon_i) domain, downstream of the prim_flop_2sync synchronizer in the NRZ handshake's ack_sync path. The source FF feeds through the synchronized ack signal into destination-domain FSM/arbiter logic. Post-sync combo in the destination domain is safe."
+    },
+    {
+      "crux_signal": "$procmux$8_Y",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal to prim_reg_cdc_arb (gen_wr_req) for u_wkup_count_hi_cdc. The combinational path is post-synchronization destination-domain logic within the NRZ handshake arbiter. The ack signal from clk_i is properly double-flop synchronized before entering the destination-domain FSM that produces this signal."
+    },
+    {
+      "crux_signal": "$procmux$1548_Y",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal to prim_reg_cdc_arb (gen_wr_req) for u_wkup_count_lo_cdc. Same pattern as other gen_wr_req arbiter paths: combinational logic is in the clk_aon_i domain after the ack_sync double-flop synchronizer. The source-domain FF influences the destination only through the properly synchronized NRZ handshake channel."
+    },
+    {
+      "crux_signal": "$procmux$578_Y",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal to prim_reg_cdc_arb (gen_wr_req) for u_wdog_count_cdc. The combinational path is post-synchronization destination-domain arbiter logic. The crossing from clk_i goes through the ack_sync prim_flop_2sync before reaching the destination-domain FSM that computes this mux output."
+    },
+    {
+      "crux_signal": "u_reg.aon_wdog_count_ds",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Multi-bit data path through prim_reg_cdc for u_wdog_count_cdc (DstWrReq=1). The signal aon_wdog_count_ds is the dst_ds output of the u_wdog_count prim_subreg in the clk_aon_i domain, which feeds back into prim_reg_cdc_arb for readback. The source-domain data (src_q/dst_wd_o) is held stable by the req/ack handshake protocol throughout the CDC transfer. The write-enable (dst_we_o) only asserts when the handshake completes in the destination domain, guaranteeing data stability at capture."
+    },
+    {
+      "crux_signal": "u_reg.u_wdog_count_cdc.u_arb.gen_wr_req.u_dst_update_sync.gen_nrz_hs_protocol.src_req_d",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal NRZ handshake FSM signal in prim_sync_reqack within u_wdog_count_cdc. src_req_d is the next-state logic for src_req_q (both in clk_aon_i domain, since clk_src_i of u_dst_update_sync maps to clk_aon_i). The dependency on clk_i enters through the ack_sync prim_flop_2sync, which properly synchronizes dst_ack_q. The combo logic computing src_req_d is entirely post-synchronization in the destination domain."
+    },
+    {
+      "crux_signal": "u_reg.aon_wkup_cause_ds",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Multi-bit data path through prim_reg_cdc for u_wkup_cause_cdc (DstWrReq=1). Same pattern as aon_wdog_count_ds: the source-domain write data (src_q) is held stable by the handshake protocol. The prim_reg_cdc_arb ensures dst_we_o only fires when the handshake completes, and HW/SW write conflicts are properly arbitrated. Data is guaranteed stable at the destination capture point."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_cause_cdc.u_arb.gen_wr_req.u_dst_update_sync.gen_nrz_hs_protocol.src_req_d",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal NRZ handshake FSM signal in prim_sync_reqack within u_wkup_cause_cdc. Same pattern as u_wdog_count_cdc: src_req_d is destination-domain (clk_aon_i) next-state logic. The clk_i dependency enters only through the ack_sync double-flop synchronizer. All combo is post-sync in the destination domain."
+    },
+    {
+      "crux_signal": "u_reg.aon_wkup_count_hi_ds",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Multi-bit data path through prim_reg_cdc for u_wkup_count_hi_cdc (DstWrReq=1). The source-domain write data is held stable by the req/ack handshake. The prim_reg_cdc_arb arbitrates HW (timer increment) and SW writes, with dst_we_o gated by the synchronized handshake completion. Data stability guaranteed by protocol."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_count_hi_cdc.u_arb.gen_wr_req.u_dst_update_sync.gen_nrz_hs_protocol.src_req_d",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal NRZ handshake FSM signal in prim_sync_reqack within u_wkup_count_hi_cdc. Destination-domain (clk_aon_i) next-state logic with clk_i dependency entering only through the properly synchronized ack_sync path."
+    },
+    {
+      "crux_signal": "u_reg.aon_wkup_count_lo_ds",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Multi-bit data path through prim_reg_cdc for u_wkup_count_lo_cdc (DstWrReq=1). Same handshake-protected pattern: src_q data is held stable during the CDC transfer. Write-enable is gated by synchronized handshake completion in the destination domain."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_count_lo_cdc.u_arb.gen_wr_req.u_dst_update_sync.gen_nrz_hs_protocol.src_req_d",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Internal NRZ handshake FSM signal in prim_sync_reqack within u_wkup_count_lo_cdc. Destination-domain next-state logic; clk_i dependency enters only through the ack_sync double-flop synchronizer."
+    },
+    {
+      "crux_signal": "u_reg.aon_wkup_ctrl_we",
+      "crux_rule": "COMBO_BEFORE_SYNC",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Write-enable for wkup_ctrl register fields, computed as txn_bits_q (clk_i) AND dst_req (clk_aon_i, from prim_pulse_sync). In prim_reg_cdc (DstWrReq=0, gen_passthru), dst_req is a properly synchronized single-cycle pulse from prim_pulse_sync. txn_bits_q is captured at transaction start and held stable throughout the handshake (guaranteed stable for 2+ destination clock cycles before dst_req fires). The AND produces a clean, glitch-free pulse in the destination domain. Feeds u_wkup_ctrl0_qe prim_flop (clk_aon_i) which generates the prescaler.qe signal used by aon_timer_core to reset the prescale counter."
+    },
+    {
+      "crux_signal": "$3670y",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wkup_thold_hi_cdc and wkup_thold_lo_cdc synchronized request signals. These are independently CDC'd 32-bit threshold register halves that reconverge in the 64-bit comparison wkup_count >= {wkup_thold_hi.q, wkup_thold_lo.q} in aon_timer_core. Both values are stable registered outputs in the clk_aon_i domain. Each CDC transfer is individually correct and complete. The reconvergence is normal destination-domain combinational logic operating on stable register values. Any non-atomicity between the two halves is a software usage concern (SW should configure thresholds before enabling the timer), not a hardware CDC defect."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_count_hi.wr_en",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wkup_count_hi_cdc and wkup_ctrl_cdc synchronized request signals at the count_hi write-enable. The write-enable for u_wkup_count_hi combines the SW write path (from wkup_count_hi_cdc handshake) with the HW write path (wkup_incr, which depends on wkup_ctrl.enable.q from wkup_ctrl_cdc). Both are registered values in the clk_aon_i domain, and the prim_reg_cdc_arb properly arbitrates between concurrent SW and HW writes. No data corruption risk."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_count_lo.wr_en",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wkup_count_lo_cdc and wkup_ctrl_cdc at the count_lo write-enable. Same pattern as wkup_count_hi: independent CDC'd register values used together in destination-domain arbitration logic. The prim_reg_cdc_arb handles SW/HW write conflicts correctly."
+    },
+    {
+      "crux_signal": "aon_wkup_intr_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wkup_ctrl_cdc and wkup_thold_hi_cdc at the wakeup interrupt set logic. In aon_timer_core: wkup_intr_o = wkup_incr & (wkup_count >= wkup_thold). wkup_incr depends on wkup_ctrl.enable.q (from ctrl CDC) and the threshold comes from thold CDCs. All inputs are stable registered values in clk_aon_i, updated independently via handshake-protected CDC transfers. Normal destination-domain combinational logic."
+    },
+    {
+      "crux_signal": "aon_wkup_intr_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Same reconvergence as above (wkup_ctrl_cdc and wkup_thold_hi_cdc) but traced to u_aon_intr_flop.q_o, which registers the interrupt set signal before it crosses back to clk_i via prim_edge_detector. The flop samples a stable combinational result derived from registered AON-domain values."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_cause.de",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wdog_bark_thold_cdc and wkup_thold_hi_cdc at wkup_cause.de. The cause register data-enable is hw2reg.wkup_cause.de = aon_wkup_intr_set | aon_wdog_intr_set, combining wakeup and watchdog interrupt conditions. Both depend on independently CDC'd threshold/control values, but all are stable registered outputs in clk_aon_i. The OR of two stable signals is itself stable."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_cause.de",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Same reconvergence pattern as above (wdog_bark_thold_cdc and wkup_thold_hi_cdc) at a different meeting point in the wkup_cause.de logic. Both contributing signals are stable registered values in the AON domain."
+    },
+    {
+      "crux_signal": "aon_intr_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wdog_bark_thold_cdc and wkup_thold_hi_cdc at u_intr_sync (prim_edge_detector). The aon_intr_set signal is the registered output of u_aon_intr_flop, which samples {aon_wdog_intr_set, aon_wkup_intr_set}. This registered signal then feeds into prim_edge_detector (with EnSync=1, using prim_flop_2sync) for proper CDC back to clk_i. The reconverging signals are stable registered values."
+    },
+    {
+      "crux_signal": "u_reg.u_wdog_count.wr_en",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wdog_count_cdc and wdog_ctrl_cdc at the watchdog count write-enable. Same pattern as wkup_count: SW writes (from count CDC) and HW increments (gated by wdog_ctrl.enable.q from ctrl CDC) reconverge at the subreg write-enable. Both are stable registered values in clk_aon_i, and prim_reg_cdc_arb properly handles arbitration."
+    },
+    {
+      "crux_signal": "aon_wdog_intr_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wdog_bark_thold_cdc and wdog_ctrl_cdc at the watchdog interrupt set logic. In aon_timer_core: wdog_intr_o = wdog_incr & (wdog_count.q >= wdog_bark_thold.q). wdog_incr depends on wdog_ctrl.enable.q. All values are stable registered outputs in clk_aon_i. Normal destination-domain comparison logic."
+    },
+    {
+      "crux_signal": "aon_wdog_intr_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Same reconvergence (wdog_bark_thold_cdc and wdog_ctrl_cdc) traced to u_aon_intr_flop.q_o. The interrupt set signal is registered in clk_aon_i before crossing back to clk_i via prim_edge_detector. Stable combinational result from stable registered inputs."
+    },
+    {
+      "crux_signal": "aon_rst_req_set",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wdog_bite_thold_cdc and wdog_ctrl_cdc at the reset request set logic. In aon_timer_core: wdog_reset_req_o = wdog_incr & (wdog_count.q >= wdog_bite_thold.q). Same pattern as watchdog interrupt: all inputs are stable registered values in clk_aon_i. The aon_rst_req_set feeds a set-and-hold flop (aon_rst_req_q) that latches the reset request."
+    },
+    {
+      "crux_signal": "u_reg.u_wkup_cause.wr_en",
+      "crux_rule": "RECONVERGENCE",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "verdict": "FALSE_POSITIVE",
+      "confidence": "HIGH",
+      "explanation": "Reconvergence of wkup_cause_cdc and wkup_thold_hi_cdc at the cause register write-enable. The cause register has DstWrReq=1, supporting both SW clears (W0C via wkup_cause_cdc) and HW sets (wkup_cause.de from timer interrupt logic depending on thold CDC values). The prim_reg_cdc_arb properly arbitrates concurrent access. All reconverging values are stable registered outputs in clk_aon_i."
+    }
+  ],
+  "additional_findings": [
+    {
+      "rule": "NON_ATOMIC_MULTIWORD_REG",
+      "signal": "{wkup_thold_hi.q, wkup_thold_lo.q}",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "severity": "warning",
+      "explanation": "The 64-bit wakeup threshold is split across two 32-bit registers (wkup_thold_hi, wkup_thold_lo) with independent prim_reg_cdc handshakes (DstWrReq=0). If software updates both halves while the timer is enabled, there is a transient window where the threshold is partially updated ({old_hi, new_lo} or {new_hi, old_lo}), which could cause a spurious or missed wakeup interrupt. Mitigation: software should disable the wakeup timer before updating the threshold, then re-enable. This is a design-level usage constraint, not a synchronizer defect."
+    },
+    {
+      "rule": "NON_ATOMIC_MULTIWORD_REG",
+      "signal": "{wkup_count_hi.q, wkup_count_lo.q}",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "severity": "warning",
+      "explanation": "The 64-bit wakeup count is split across two 32-bit registers (wkup_count_hi, wkup_count_lo) with independent prim_reg_cdc handshakes (DstWrReq=1). Two concerns: (1) SW writes to set the count go through independent CDCs and could arrive at different times in clk_aon_i, during which the timer core may increment a partially-updated count. (2) SW readback via src_qs_o comes through independent CDC readback channels; if the count rolls over a 32-bit boundary between the two readbacks, SW may observe a non-monotonic value. Mitigation: disable the timer before writing the count; read count twice and verify consistency for readback."
+    },
+    {
+      "rule": "REVIEW_ASYNC_INPUT",
+      "signal": "sleep_mode_i",
+      "source_domain": "async",
+      "dest_domain": "clk_aon_i",
+      "severity": "warning",
+      "explanation": "sleep_mode_i is declared as an async-domain input and is properly synchronized via prim_flop_2sync (u_sync_sleep_mode) before use in aon_timer_core. The synchronizer is correctly instantiated with clk_aon_i/rst_aon_ni. However, the synchronized value (aon_sleep_mode) directly gates the watchdog increment via wdog_ctrl.pause_in_sleep.q. If sleep_mode_i toggles rapidly or glitches, the watchdog could miss increments. Ensure the upstream source of sleep_mode_i is a registered, glitch-free signal."
+    }
+  ]
+}

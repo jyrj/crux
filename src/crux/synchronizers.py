@@ -181,45 +181,48 @@ def _get_sole_dff_reader(netlist: Netlist, ff: FlipFlop) -> FlipFlop | None:
 
 
 def _find_known_modules(netlist: Netlist, out: dict[str, Synchronizer]) -> None:
-    """Detect synchronizers by matching cell/net names against known module names.
+    """Detect synchronizers using known module names as HINTS, then structurally verify.
 
-    After Yosys flatten, hierarchical names are preserved. A cell from
-    prim_flop_2sync will have a name like:
-      $flatten\\u_sync.u_sync_1.$procdff$42
-    or a net name like:
-      \\u_sync.intq
+    Name matching narrows the search. Structural checks validate:
+    - Related FFs must share the same clock domain
+    - Must have a cross-domain source
+    - Must form a chain (Q->D connectivity between stages)
+    Name alone is NOT sufficient — prevents false "safe" classification.
     """
-    # Group FFs by their hierarchical prefix (everything before the last '.')
     for ff_name, ff in netlist.flip_flops.items():
         if ff_name in out:
             continue
 
-        # Check if this FF's name or src attribute contains a known sync module
         name_lower = ff_name.lower()
         src_lower = ff.src.lower()
 
         for module_name in KNOWN_SYNC_MODULES:
             if module_name in name_lower or module_name in src_lower:
-                # This FF is part of a known synchronizer module
-                # Find all FFs sharing the same prefix
                 prefix = _extract_instance_prefix(ff_name, module_name)
                 if prefix:
                     related_ffs = _find_ffs_with_prefix(netlist, prefix)
                     if len(related_ffs) >= 2:
-                        # Sort by name to get consistent ordering
                         related_ffs.sort(key=lambda f: f.name)
-                        # Determine source domain from first stage
+                        # Structural check: all FFs must share same clock
+                        clocks = {f.clock_net for f in related_ffs}
+                        if len(clocks) != 1:
+                            break  # Mixed clocks — not a simple sync chain
+                        # Structural check: must have cross-domain source
                         src_domain = _find_deep_source_domain(netlist, related_ffs[0])
-                        if src_domain is not None and src_domain != related_ffs[0].clock_net:
-                            sync = Synchronizer(
-                                stages=related_ffs,
-                                src_domain=src_domain,
-                                dst_domain=related_ffs[0].clock_net,
-                                sync_type="known_module",
-                                module_name=module_name,
-                            )
-                            for rff in related_ffs:
-                                out[rff.name] = sync
+                        if src_domain is None or src_domain == related_ffs[0].clock_net:
+                            break  # No cross-domain input
+                        # Structural check: stages must be connected (Q->D chain)
+                        if not _verify_chain_connectivity(netlist, related_ffs):
+                            break  # FFs not actually chained
+                        sync = Synchronizer(
+                            stages=related_ffs,
+                            src_domain=src_domain,
+                            dst_domain=related_ffs[0].clock_net,
+                            sync_type="known_module",
+                            module_name=module_name,
+                        )
+                        for rff in related_ffs:
+                            out[rff.name] = sync
                 break
 
 
@@ -238,6 +241,29 @@ def _extract_instance_prefix(cell_name: str, module_name: str) -> str | None:
     if dot_idx >= 0:
         return cell_name[:dot_idx + 1]
     return cell_name[:end]
+
+
+def _verify_chain_connectivity(netlist: Netlist, ffs: list[FlipFlop]) -> bool:
+    """Verify that FFs form a connected chain (Q of one feeds D of next)."""
+    if len(ffs) < 2:
+        return False
+    q_bits_to_ff: dict[int, str] = {}
+    for ff in ffs:
+        for q_bit in ff.q_bits:
+            q_bits_to_ff[q_bit] = ff.name
+    # Check: for each FF except the last, at least one Q bit feeds the next FF's D
+    for i in range(len(ffs) - 1):
+        connected = False
+        for q_bit in ffs[i].q_bits:
+            for d_bit in ffs[i + 1].d_bits:
+                if q_bit == d_bit:
+                    connected = True
+                    break
+            if connected:
+                break
+        if not connected:
+            return False
+    return True
 
 
 def _find_ffs_with_prefix(netlist: Netlist, prefix: str) -> list[FlipFlop]:

@@ -1,0 +1,18 @@
+CDC analysis complete. Here's a summary:
+
+**6 Clock Domains**: sys_clk (100 MHz), per_clk (25 MHz), dma_clk (200 MHz), usb_clk (~48 MHz), aon_clk (200 kHz), spi_clk (50 MHz) — all asynchronous.
+
+**8 Violations found:**
+
+| Rule | Signal | Crossing | Location |
+|------|--------|----------|----------|
+| MISSING_SYNC | `dma_busy` | dma_clk→sys_clk | crux_bench_large.v:131 |
+| COMBO_BEFORE_SYNC | `per_masked` | per_clk→sys_clk | crux_bench_large.v:139 |
+| RESET_DOMAIN_CROSSING | `aon_err` | aon_clk→dma_clk | crux_bench_large.v:154 |
+| MISSING_SYNC | `timeout_write` | sys_clk→aon_clk | watchdog.v:28 |
+| MULTI_BIT_CDC | `timeout_val[15:0]` | sys_clk→aon_clk | watchdog.v:28 |
+| RECONVERGENCE | `pwr_status[2:0]` | aon_clk→sys_clk | power_manager.v:40 |
+| RECONVERGENCE | `wakeup_trigger` | aon_clk→sys_clk | interrupt_controller.v:51 |
+| MULTI_BIT_CDC | `tx_rptr[3:0]` | spi_clk→sys_clk | spi_bridge.v:79 |
+
+**23 Safe crossings** verified across all modules — using gray_sync (async FIFOs), pulse_sync (interrupt/done signals), sync_2ff (single-bit control), and handshake protocols (multi-bit data).

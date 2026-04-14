@@ -1,0 +1,109 @@
+{
+  "clock_domains": [
+    "clk_i",
+    "clk_aon_i",
+    "async"
+  ],
+  "violations": [
+    {
+      "rule": "RECONVERGENCE",
+      "signal": "wkup_count_hi / wkup_count_lo",
+      "source_domain": "clk_aon_i",
+      "dest_domain": "clk_i",
+      "explanation": "The 64-bit wakeup counter is split into two 32-bit registers (wkup_count_hi and wkup_count_lo) that are updated atomically in the clk_aon_i domain by aon_timer_core (both share the same write-enable aon_wkup_count_reg_wr), but are synchronized back to clk_i independently via two separate prim_reg_cdc instances (u_wkup_count_hi_cdc at aon_timer_reg_top.sv:315 and u_wkup_count_lo_cdc at aon_timer_reg_top.sv:358). These independently synchronized paths reconverge when software reads the full 64-bit count. During a low-half rollover (0xFFFFFFFF to 0x00000000), software could observe the new low half with the stale high half, yielding a value off by ~4 billion. This is a known OpenTitan design pattern mitigated by a software read-twice-and-compare protocol, but it is an unsafe reconvergence from a strict CDC perspective."
+    }
+  ],
+  "safe_crossings": [
+    {
+      "signal": "sleep_mode_i",
+      "source_domain": "async",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_flop_2sync (double-flop synchronizer)",
+      "explanation": "Asynchronous 1-bit sleep mode indicator synchronized into the clk_aon_i domain via prim_flop_2sync instance u_sync_sleep_mode (aon_timer.sv:84-91). Single-bit signal with proper 2FF synchronization."
+    },
+    {
+      "signal": "lc_escalate_en_i",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_lc_sync (prim_flop_2sync with redundant lc_tx_t encoding)",
+      "explanation": "Life-cycle escalation enable signal (lc_tx_t, 4-bit redundant encoding) synchronized from clk_i to clk_aon_i via prim_lc_sync instance u_lc_sync_escalate_en (aon_timer.sv:151-158). Although multi-bit, the lc_tx_t encoding (On=4'b1010, Off=4'b0101) ensures that any intermediate value during synchronization will not be decoded as the active value by the downstream lc_tx_test_false_strict check. Three output copies are generated for fan-out isolation."
+    },
+    {
+      "signal": "wkup_ctrl (enable + prescaler)",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "13-bit wakeup control register (1-bit enable + 12-bit prescaler) transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wkup_ctrl_cdc (aon_timer_reg_top.sv:196-219). Uses prim_pulse_sync for the request and prim_pulse_sync for the acknowledgement. Data is held stable in src_q during the handshake, ensuring glitch-free multi-bit transfer."
+    },
+    {
+      "signal": "wkup_thold_hi",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "32-bit wakeup threshold high register transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wkup_thold_hi_cdc (aon_timer_reg_top.sv:234-257). Handshake ensures data stability during transfer."
+    },
+    {
+      "signal": "wkup_thold_lo",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "32-bit wakeup threshold low register transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wkup_thold_lo_cdc (aon_timer_reg_top.sv:272-295). Handshake ensures data stability during transfer."
+    },
+    {
+      "signal": "wkup_count_hi",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=1, bidirectional)",
+      "explanation": "32-bit wakeup count high register with bidirectional CDC via prim_reg_cdc instance u_wkup_count_hi_cdc (aon_timer_reg_top.sv:315-338). Software writes cross clk_i to clk_aon_i via prim_pulse_sync; hardware updates cross clk_aon_i to clk_i via prim_sync_reqack in prim_reg_cdc_arb. Each individual 32-bit transfer is safe. See RECONVERGENCE violation for the 64-bit composite concern."
+    },
+    {
+      "signal": "wkup_count_lo",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=1, bidirectional)",
+      "explanation": "32-bit wakeup count low register with bidirectional CDC via prim_reg_cdc instance u_wkup_count_lo_cdc (aon_timer_reg_top.sv:358-381). Software writes cross clk_i to clk_aon_i via prim_pulse_sync; hardware updates cross clk_aon_i to clk_i via prim_sync_reqack in prim_reg_cdc_arb. Each individual 32-bit transfer is safe. See RECONVERGENCE violation for the 64-bit composite concern."
+    },
+    {
+      "signal": "wdog_ctrl (enable + pause_in_sleep)",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "2-bit watchdog control register transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wdog_ctrl_cdc (aon_timer_reg_top.sv:399-422). Both fields (enable and pause_in_sleep) are transferred atomically within a single prim_reg_cdc instance. REGWEN gating (wdog_regwen_qs) is captured in the src domain and transferred alongside the data."
+    },
+    {
+      "signal": "wdog_bark_thold",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "32-bit watchdog bark threshold register transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wdog_bark_thold_cdc (aon_timer_reg_top.sv:438-461). REGWEN-gated on the destination side."
+    },
+    {
+      "signal": "wdog_bite_thold",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=0)",
+      "explanation": "32-bit watchdog bite threshold register transferred from clk_i to clk_aon_i via prim_reg_cdc instance u_wdog_bite_thold_cdc (aon_timer_reg_top.sv:477-500). REGWEN-gated on the destination side."
+    },
+    {
+      "signal": "wdog_count",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=1, bidirectional)",
+      "explanation": "32-bit watchdog count register with bidirectional CDC via prim_reg_cdc instance u_wdog_count_cdc (aon_timer_reg_top.sv:520-543). Software writes cross clk_i to clk_aon_i; hardware counter updates cross clk_aon_i to clk_i via prim_sync_reqack in prim_reg_cdc_arb. Single 32-bit register, no reconvergence concern."
+    },
+    {
+      "signal": "wkup_cause",
+      "source_domain": "clk_i",
+      "dest_domain": "clk_aon_i",
+      "sync_method": "prim_reg_cdc with req/ack handshake (DstWrReq=1, bidirectional)",
+      "explanation": "1-bit wakeup cause register with bidirectional CDC via prim_reg_cdc instance u_wkup_cause_cdc (aon_timer_reg_top.sv:563-586). Hardware sets the cause in clk_aon_i when aon_wkup_intr_set or aon_wdog_intr_set fire; software clears it via write from clk_i. Single-bit, no multi-bit concern."
+    },
+    {
+      "signal": "aon_intr_set[1:0] (wkup_intr, wdog_intr)",
+      "source_domain": "clk_aon_i",
+      "dest_domain": "clk_i",
+      "sync_method": "prim_edge_detector with prim_flop_2sync (EnSync=1)",
+      "explanation": "Two independent interrupt indicator bits (wakeup and watchdog) generated by aon_timer_core on clk_aon_i, registered by u_aon_intr_flop (aon_timer.sv:197-205), then synchronized to clk_i via prim_edge_detector u_intr_sync (aon_timer.sv:207-218) with EnSync=1. The edge detector uses prim_flop_2sync internally. Each bit is logically independent (separate interrupt source), so independent synchronization is correct. The source pulses last one clk_aon_i cycle; since clk_i is faster, the 2FF synchronizer reliably captures them. Posedge detection converts the level crossing into event pulses for prim_intr_hw."
+    }
+  ]
+}

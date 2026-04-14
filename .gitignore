@@ -34,3 +34,9 @@ extern/yosys-slang/build/
 
 # OS
 .DS_Store
+
+# Private evaluation ground truth (never expose to LLM agents)
+eval/.ground_truth_private.json
+arxiv/*
+EVALUATION.md
+*.tex

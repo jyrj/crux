@@ -1,0 +1,52 @@
+design: crux_bench_small
+top_module: crux_bench_small
+ff_count: 34
+clock_domains:
+  - {name: sys_clk, freq_mhz: 100}
+  - {name: per_clk, freq_mhz: 25}
+  - {name: aon_clk, freq_mhz: 0.2}
+  - {name: usb_clk, freq_mhz: 48}
+
+crossings:
+  # Safe crossings
+  - {id: S1, src: sys_clk, dst: per_clk, signal: uart_tx_pulse, sync: pulse_sync, bug: false}
+  - {id: S2, src: sys_clk, dst: usb_clk, signal: fifo_wptr, sync: gray_2ff, bug: false}
+  - {id: S3, src: aon_clk, dst: sys_clk, signal: wakeup_event, sync: 2ff, bug: false}
+  - {id: S4, src: sys_clk, dst: per_clk, signal: cpu_tx_valid, sync: 2ff, bug: false}
+  - {id: S5, src: per_clk, dst: sys_clk, signal: gpio_flag, sync: 2ff, bug: false}
+  - {id: S6, src: sys_clk, dst: usb_clk, signal: dma_data, sync: handshake, bug: false}
+  - {id: S7, src: sys_clk, dst: aon_clk, signal: wdog_kick, sync: 2ff, bug: false}
+  - {id: S8, src: usb_clk, dst: sys_clk, signal: usb_valid, sync: 2ff, bug: false}
+
+  # Bugs
+  - id: B1
+    src: usb_clk
+    dst: per_clk
+    signal: usb_valid_r
+    bug: true
+    rule: MISSING_SYNC
+    description: "usb_valid_r (usb_clk FF) sampled directly by per_clk FF"
+
+  - id: B2
+    src: sys_clk
+    dst: per_clk
+    signal: cpu_status
+    bug: true
+    rule: MULTI_BIT_CDC
+    description: "8-bit cpu_status crosses sys->per without gray code or handshake"
+
+  - id: B3
+    src: usb_clk
+    dst: sys_clk
+    signal: usb_flag_masked
+    bug: true
+    rule: COMBO_BEFORE_SYNC
+    description: "AND gate on CDC path: usb_tx_data[0] & usb_valid_r before sync"
+
+  - id: B4
+    src: per_clk
+    dst: aon_clk
+    signal: per_rst_gen
+    bug: true
+    rule: RESET_DOMAIN_CROSSING
+    description: "per_clk FF output drives aon_clk FF async reset without sync"

@@ -1,0 +1,31 @@
+{
+  "clock_domains": [
+    "clk_a",
+    "clk_b"
+  ],
+  "violations": [
+    {
+      "rule": "COMBO_BEFORE_SYNC",
+      "signal": "cnt_err",
+      "source_domain": "clk_a",
+      "dest_domain": "clk_b",
+      "explanation": "Signal cnt_err (err_o from prim_count_hardened) is the output of combinational logic — a 5-bit adder ({1'b0,cnt_q} + {1'b0,cnt_sec_q}) followed by a not-equal comparator — and is fed directly into the first stage of the 2FF synchronizer (err_sync1) in the clk_b domain. Because cnt_err is not registered in the source domain (clk_a), transient glitches from the combinational adder/comparator can propagate into the synchronizer and be captured as a spurious value on a clk_b edge. The fix is to register cnt_err with a flip-flop clocked by clk_a before it enters the clk_b synchronizer."
+    },
+    {
+      "rule": "RESET_DOMAIN_CROSSING",
+      "signal": "rst_n",
+      "source_domain": "clk_a",
+      "dest_domain": "clk_b",
+      "explanation": "The asynchronous active-low reset rst_n is shared directly between the clk_a domain (prim_count_hardened instance u_count) and the clk_b domain (err_sync1, err_sync2, error_flag flip-flops). There is no reset synchronizer in either domain. When rst_n deasserts, if the deassertion edge is not synchronous to both clk_a and clk_b, the flip-flops in each domain may exit reset on different clock cycles, causing metastability or inconsistent state. The fix is to use a per-domain async-assert / sync-deassert reset synchronizer for each clock domain."
+    }
+  ],
+  "safe_crossings": [
+    {
+      "signal": "err_sync1/err_sync2 (synchronized cnt_err)",
+      "source_domain": "clk_a",
+      "dest_domain": "clk_b",
+      "sync_method": "2FF synchronizer",
+      "explanation": "The single-bit signal cnt_err from clk_a is passed through a two-stage flip-flop synchronizer (err_sync1 -> err_sync2) clocked by clk_b, which is the correct structure for synchronizing a single-bit level signal across asynchronous domains. The synchronizer handles metastability resolution. However, this crossing is subject to the COMBO_BEFORE_SYNC violation noted above — the input to the synchronizer should be registered in the source domain for full robustness."
+    }
+  ]
+}

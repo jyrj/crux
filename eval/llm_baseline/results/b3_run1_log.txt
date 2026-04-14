@@ -1,0 +1,16 @@
+CDC analysis complete. Report written to `cdc_report.json`.
+
+**Summary of findings:**
+
+| # | Rule | Signal | Crossing | 
+|---|------|--------|----------|
+| 1 | COMBO_BEFORE_SYNC | `cnt_err` | clk_a → clk_b |
+| 2 | RESET_DOMAIN_CROSSING | `rst_n` | shared clk_a / clk_b |
+
+**2 violations found:**
+
+1. **COMBO_BEFORE_SYNC** — `cnt_err` is combinational (adder + comparator output) and feeds the 2FF synchronizer directly. Should be registered in `clk_a` first.
+
+2. **RESET_DOMAIN_CROSSING** — `rst_n` is used as async reset in both clock domains with no per-domain async-assert/sync-deassert reset synchronizer.
+
+**1 safe crossing:** The 2FF synchronizer (`err_sync1` → `err_sync2`) is structurally correct for single-bit synchronization, though its effectiveness is reduced by the COMBO_BEFORE_SYNC issue on its input.

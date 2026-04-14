@@ -1,0 +1,42 @@
+{
+  "clock_domains": ["clk_lc", "clk_kmac"],
+  "violations": [
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "token_hash_req",
+      "source_domain": "clk_lc",
+      "dest_domain": "clk_kmac",
+      "explanation": "token_hash_req originates in the clk_lc domain and is used directly in the clk_kmac FSM combinational logic (line 33: IDLE→WAIT transition). A 2-flop synchronizer exists (req_sync1→req_sync2, lines 53-55) but its output req_sync2 is never consumed by the FSM. The FSM samples the unsynchronized signal, risking metastability."
+    },
+    {
+      "rule": "COMBO_BEFORE_SYNC",
+      "signal": "hash_done",
+      "source_domain": "clk_kmac",
+      "dest_domain": "clk_lc",
+      "explanation": "hash_done is defined as the combinational expression (state_q == DONE) on line 58, decoding the 2-bit state_q register from the clk_kmac domain. This combinational output feeds directly into the first synchronizer flop ack_sync1 in the clk_lc domain (line 61). When state_q transitions between values where multiple bits change (e.g., WAIT=2'b01 to DONE=2'b10), the comparator output can glitch, and the glitch may be captured by ack_sync1. The source should be a single registered bit, not a combinational decode."
+    },
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "fsm_err_o",
+      "source_domain": "clk_kmac",
+      "dest_domain": "clk_lc",
+      "explanation": "fsm_err_o is driven by a direct continuous assignment from kmac_fsm_err (line 70), which is a combinational signal derived from state_q in the clk_kmac domain. There is no synchronizer or register on this output. Since all other outputs of this module (token_hash_ack, token_hash_err) target the clk_lc domain, fsm_err_o is presumed to be consumed in the clk_lc domain, making this an unsynchronized CDC crossing that risks metastability and glitch propagation."
+    },
+    {
+      "rule": "RESET_DOMAIN_CROSSING",
+      "signal": "rst_n",
+      "source_domain": "clk_lc",
+      "dest_domain": "clk_kmac",
+      "explanation": "A single asynchronous active-low reset rst_n is shared across flip-flops clocked by both clk_lc (lines 59-60, 63-64) and clk_kmac (lines 25-26, 48-49, 53-54) without per-domain reset synchronizers. When rst_n deasserts, the deassertion edge is asynchronous to both clocks and may violate recovery/removal timing in one or both domains, causing metastability. Each clock domain should have its own reset synchronizer to ensure clean synchronous deassertion."
+    }
+  ],
+  "safe_crossings": [
+    {
+      "signal": "ack_sync1 / ack_sync2 (hash_done path)",
+      "source_domain": "clk_kmac",
+      "dest_domain": "clk_lc",
+      "sync_method": "2-flop synchronizer",
+      "explanation": "The acknowledgment path from clk_kmac to clk_lc uses a structurally correct 2-flop synchronizer: hash_done → ack_sync1 → ack_sync2 (lines 59-61), with ack_sync2 then registered into token_hash_ack (line 66). The synchronizer structure itself is valid, however the input signal hash_done has a COMBO_BEFORE_SYNC issue listed in violations that undermines its effectiveness."
+    }
+  ]
+}

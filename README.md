@@ -35,19 +35,19 @@ graph LR
 ## What it recognizes as safe
 
 - N-FF synchronizer chains (2FF, 3FF) via structural fan-out analysis
-- Known CDC modules (`prim_flop_2sync`, `prim_pulse_sync`, `prim_fifo_async`, `prim_sync_reqack`, PULP cells) via flattened hierarchy name matching
+- Known CDC modules (`prim_flop_2sync`, `prim_pulse_sync`, etc.) — name matching as hint, then structurally verified (clock domain, chain connectivity, cross-domain source)
 - Gray-coded buses: verifies XOR-shift pattern (`gray = bin ^ (bin >> 1)`) in Yosys netlist
 - Handshake-protected multi-bit crossings: traces `$adffe` enable to synchronized control signal
 - Reset sync stages: "async assert, sync de-assert" pattern (Q drives same-domain FF ARST)
 - Glitch-free clock mux: AND-OR tree with negedge-clocked select FFs
 
-## What it does NOT do
+## Limitations
 
-- Formal verification of CDC protocols
-- Metastability MTBF calculation (needs technology library data)
-- Simulation-based CDC checking
-- Hierarchical analysis (requires flattened design)
-- Full Accellera CDC/RDC Standard 1.0 support (planned)
+- **Flattened analysis only.** Yosys flattens the design into a single module. This works for IP-level analysis but will struggle on multi-million-gate SoCs. Commercial tools do hierarchical CDC.
+- **Gray code detection is pattern-specific.** Relies on Yosys preserving the `$xor` cell structure after `opt -fast`. If Yosys folds into LUTs, detection fails conservatively (false violation, not false "safe").
+- **Python performance.** Graph traversal in Python limits practical design size to ~10K-50K FFs. A C++ backend would be needed for full-SoC analysis.
+- **No formal protocol verification.** The SymbiYosys bridge generates assertions but does not run them. Users need sby installed separately.
+- **Structural, not semantic.** Detects synchronizer structures, not whether the protocol using them is correct.
 
 ## Install
 

@@ -1,0 +1,238 @@
+{
+  "clock_domains": [
+    "sys_clk (100 MHz, period 10.0 ns)",
+    "per_clk (25 MHz, period 40.0 ns)",
+    "dma_clk (200 MHz, period 5.0 ns)",
+    "usb_clk (~48 MHz, period 20.83 ns)",
+    "aon_clk (200 kHz, period 5000 ns)",
+    "spi_clk (50 MHz, period 20.0 ns)"
+  ],
+  "violations": [
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "dma_busy",
+      "source_domain": "dma_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "In crux_bench_large.v lines 125-131, dma_busy is registered on posedge dma_clk and then sampled directly by sys_debug on posedge sys_clk with no synchronizer. This creates a metastability risk on sys_debug[0]."
+    },
+    {
+      "rule": "COMBO_BEFORE_SYNC",
+      "signal": "per_masked",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "In crux_bench_large.v lines 139-143, per_activity (per_clk domain) is AND'd with uart_irq (sys_clk domain) through combinational logic to produce per_masked, which then feeds the first stage of a 2FF synchronizer (per_sync1). Combinational logic on the CDC path before the sync stage can produce glitches that get captured as metastable values."
+    },
+    {
+      "rule": "RESET_DOMAIN_CROSSING",
+      "signal": "aon_err",
+      "source_domain": "aon_clk",
+      "dest_domain": "dma_clk",
+      "explanation": "In crux_bench_large.v lines 149-156, aon_err is a register clocked by aon_clk that is used as an asynchronous reset (negedge aon_err) for the dma_err_out register clocked by dma_clk. No reset_sync primitive is used to synchronize the reset deassertion to dma_clk, creating a metastability risk on reset release."
+    },
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "timeout_write",
+      "source_domain": "sys_clk",
+      "dest_domain": "aon_clk",
+      "explanation": "In watchdog.v line 28, timeout_write is a sys_clk domain control signal sampled directly in the aon_clk domain (posedge aon_clk) with no synchronizer. This can cause metastability and missed or doubled writes to timeout_aon."
+    },
+    {
+      "rule": "MULTI_BIT_CDC",
+      "signal": "timeout_val[15:0]",
+      "source_domain": "sys_clk",
+      "dest_domain": "aon_clk",
+      "explanation": "In watchdog.v line 28, the 16-bit timeout_val bus from sys_clk is sampled directly in the aon_clk domain with no gray-code encoding or handshake protocol. Multiple bits can change simultaneously, leading to a corrupted intermediate value being captured in timeout_aon."
+    },
+    {
+      "rule": "RECONVERGENCE",
+      "signal": "pwr_status[2:0]",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "In power_manager.v line 40, three signals (sleep_req_synced, wakeup_synced, lp_hint_synced) are each independently synchronized from aon_clk to sys_clk via separate sync_2ff instances, then combined into the 3-bit pwr_status bus. Because each synchronizer can resolve at different sys_clk edges, pwr_status can present inconsistent intermediate states (e.g., sleep_req seen one cycle before wakeup), leading to incorrect control decisions downstream."
+    },
+    {
+      "rule": "RECONVERGENCE",
+      "signal": "wakeup_trigger",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "In interrupt_controller.v line 51, wdog_bark (synchronized from aon_clk via pulse_sync in the watchdog module) and pwr_status[1] (synchronized from aon_clk via sync_2ff in the power_manager module) are AND'd together. These two independently synchronized paths from the same source domain reconverge, so their relative timing is not preserved. A wakeup event and watchdog bark occurring simultaneously in aon_clk may not be seen in the same sys_clk cycle, causing wakeup_trigger to be missed or delayed."
+    },
+    {
+      "rule": "MULTI_BIT_CDC",
+      "signal": "tx_rptr[3:0]",
+      "source_domain": "spi_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "In spi_bridge.v lines 78-82, the 4-bit binary read pointer tx_rptr (spi_clk domain) is synchronized to sys_clk using sync_2ff #(.W(4)), a plain multi-bit 2FF synchronizer. Unlike the write pointer which correctly uses gray_sync, the binary read pointer can change multiple bits simultaneously (e.g., 0111->1000), causing the synchronized value to be corrupted. A gray_sync should be used instead."
+    }
+  ],
+  "safe_crossings": [
+    {
+      "signal": "tx_wptr[4:0] (UART TX FIFO write pointer)",
+      "source_domain": "sys_clk",
+      "dest_domain": "per_clk",
+      "sync_method": "gray_sync",
+      "explanation": "uart_subsystem.v: Write pointer is gray-encoded and synchronized through a 3-stage gray_sync primitive (binary-to-gray in source, 2FF sync, output in destination). Safe for multi-bit pointer crossing."
+    },
+    {
+      "signal": "tx_rptr[4:0] (UART TX FIFO read pointer)",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "gray_sync",
+      "explanation": "uart_subsystem.v: Read pointer is gray-encoded and synchronized through gray_sync. Completes the async FIFO full/empty detection safely."
+    },
+    {
+      "signal": "rx_valid_per (UART RX valid)",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "2FF synchronizer + handshake",
+      "explanation": "uart_subsystem.v lines 70-73: rx_valid_per is synchronized via a 2FF chain (rx_valid_sync1, rx_valid_sync2). Part of a full req/ack handshake protocol that holds rx_data_per stable during transfer."
+    },
+    {
+      "signal": "rx_data_per[7:0] (UART RX data)",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "handshake-protected multi-bit",
+      "explanation": "uart_subsystem.v lines 80-81: The 8-bit rx_data_per bus is sampled in sys_clk only after rx_valid_sync2 asserts, guaranteed stable by the handshake protocol. Data does not change while valid is asserted."
+    },
+    {
+      "signal": "rx_ack_sys (UART RX ack)",
+      "source_domain": "sys_clk",
+      "dest_domain": "per_clk",
+      "sync_method": "2FF synchronizer",
+      "explanation": "uart_subsystem.v lines 86-92: Acknowledgment signal synchronized via 2FF chain (ack_sync1, ack_sync2) back to per_clk, completing the handshake."
+    },
+    {
+      "signal": "irq_o (UART interrupt)",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "pulse_sync",
+      "explanation": "uart_subsystem.v lines 100-103: Uses the pulse_sync primitive which converts to level-toggle, 2FF syncs the level, and edge-detects on the destination side."
+    },
+    {
+      "signal": "ch0_req (DMA channel 0 request)",
+      "source_domain": "sys_clk",
+      "dest_domain": "dma_clk",
+      "sync_method": "2FF synchronizer + handshake",
+      "explanation": "dma_engine.v lines 39-42: ch0_req is synchronized via 2FF chain (ch0_req_sync1, ch0_req_sync2). Part of a full req/ack handshake with ch0_ack."
+    },
+    {
+      "signal": "ch0_desc[31:0] (DMA channel 0 descriptor)",
+      "source_domain": "sys_clk",
+      "dest_domain": "dma_clk",
+      "sync_method": "handshake-protected multi-bit",
+      "explanation": "dma_engine.v line 49: The 32-bit descriptor is loaded before ch0_req asserts and remains stable throughout the handshake. It is only sampled in dma_clk after ch0_req_sync2 is seen, so data is guaranteed stable."
+    },
+    {
+      "signal": "ch0_ack (DMA channel 0 acknowledge)",
+      "source_domain": "dma_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "2FF synchronizer + handshake",
+      "explanation": "dma_engine.v lines 58-60: ch0_ack is synchronized via 2FF chain (ch0_ack_sync1, ch0_ack_sync2) back to sys_clk, completing the handshake."
+    },
+    {
+      "signal": "ch1_req (DMA channel 1 request)",
+      "source_domain": "sys_clk",
+      "dest_domain": "dma_clk",
+      "sync_method": "2FF synchronizer + handshake",
+      "explanation": "dma_engine.v lines 74-76: Same safe handshake pattern as channel 0."
+    },
+    {
+      "signal": "ch1_ack (DMA channel 1 acknowledge)",
+      "source_domain": "dma_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "2FF synchronizer + handshake",
+      "explanation": "dma_engine.v lines 83-85: Same safe handshake pattern as channel 0."
+    },
+    {
+      "signal": "usb_wptr[3:0] (USB FIFO write pointer)",
+      "source_domain": "usb_clk",
+      "dest_domain": "dma_clk",
+      "sync_method": "gray_sync",
+      "explanation": "dma_engine.v lines 101-104: Write pointer gray-encoded and 2FF synchronized to dma_clk via gray_sync primitive."
+    },
+    {
+      "signal": "usb_rptr[3:0] (USB FIFO read pointer)",
+      "source_domain": "dma_clk",
+      "dest_domain": "usb_clk",
+      "sync_method": "gray_sync",
+      "explanation": "dma_engine.v lines 107-110: Read pointer gray-encoded and 2FF synchronized to usb_clk via gray_sync primitive."
+    },
+    {
+      "signal": "dma_done_irq (DMA done interrupt)",
+      "source_domain": "dma_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "pulse_sync",
+      "explanation": "dma_engine.v lines 123-126: Uses pulse_sync primitive for single-cycle pulse transfer from dma_clk to sys_clk."
+    },
+    {
+      "signal": "kick (watchdog kick)",
+      "source_domain": "sys_clk",
+      "dest_domain": "aon_clk",
+      "sync_method": "sync_2ff",
+      "explanation": "watchdog.v lines 18-21: Single-bit kick signal properly synchronized via sync_2ff from sys_clk to aon_clk."
+    },
+    {
+      "signal": "bark_irq (watchdog bark interrupt)",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "pulse_sync",
+      "explanation": "watchdog.v lines 43-46: Uses pulse_sync primitive to transfer the bark indication from aon_clk to sys_clk."
+    },
+    {
+      "signal": "sleep_req_synced",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff",
+      "explanation": "power_manager.v lines 20-23: Single-bit sleep_req from aon_clk domain properly synchronized via sync_2ff to sys_clk."
+    },
+    {
+      "signal": "wakeup_synced",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff",
+      "explanation": "power_manager.v lines 25-28: Single-bit wakeup_src from aon_clk domain properly synchronized via sync_2ff to sys_clk."
+    },
+    {
+      "signal": "lp_hint_synced",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff",
+      "explanation": "power_manager.v lines 30-33: Single-bit low_power_hint from aon_clk domain properly synchronized via sync_2ff to sys_clk."
+    },
+    {
+      "signal": "sleep_ack_sys (sleep acknowledge)",
+      "source_domain": "sys_clk",
+      "dest_domain": "aon_clk",
+      "sync_method": "sync_2ff",
+      "explanation": "power_manager.v lines 48-51: Single-bit sleep_ack_sys synchronized from sys_clk to aon_clk via sync_2ff."
+    },
+    {
+      "signal": "rx_wptr[3:0] (SPI RX FIFO write pointer)",
+      "source_domain": "spi_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "gray_sync",
+      "explanation": "spi_bridge.v lines 41-44: Write pointer gray-encoded and synchronized to sys_clk via gray_sync."
+    },
+    {
+      "signal": "rx_rptr[3:0] (SPI RX FIFO read pointer)",
+      "source_domain": "sys_clk",
+      "dest_domain": "spi_clk",
+      "sync_method": "gray_sync",
+      "explanation": "spi_bridge.v lines 47-50: Read pointer gray-encoded and synchronized to spi_clk via gray_sync."
+    },
+    {
+      "signal": "tx_wptr[3:0] (SPI TX FIFO write pointer)",
+      "source_domain": "sys_clk",
+      "dest_domain": "spi_clk",
+      "sync_method": "gray_sync",
+      "explanation": "spi_bridge.v lines 87-90: Write pointer gray-encoded and synchronized to spi_clk via gray_sync."
+    },
+    {
+      "signal": "spi_done (SPI transaction done)",
+      "source_domain": "spi_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "pulse_sync",
+      "explanation": "spi_bridge.v lines 108-111: Uses pulse_sync primitive for crossing from spi_clk to sys_clk."
+    }
+  ]
+}

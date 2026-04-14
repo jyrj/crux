@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .netlist import Netlist
+from .netlist import Netlist, is_dff_type
 from .clock_domains import ClockDomain, find_clock_domains
 from .trace import trace_d_input
 from .synchronizers import find_synchronizers, Synchronizer
@@ -32,6 +32,7 @@ class ViolationType(Enum):
     RESET_DOMAIN_CROSSING = "RESET_DOMAIN_CROSSING"
     CLOCK_GLITCH = "CLOCK_GLITCH"
     FREQ_MISMATCH = "FREQ_MISMATCH"
+    PORT_CDC_HAZARD = "PORT_CDC_HAZARD"
 
 
 @dataclass
@@ -139,9 +140,14 @@ def analyze_cdc(
     crossings: list[Crossing] = []
     violations: list[Violation] = []
     trace_memo: dict[int, tuple[set[int], bool, bool]] = {}
+    cdc_files = _build_cdc_source_files(netlist) if len(domains) >= 2 else set()
 
     # === Phase 1: CDC crossing analysis ===
+    # Skip per-FF tracing if design has only one clock domain (no CDC possible)
+    skip_trace = len(domains) < 2
     for ff_name, ff in netlist.flip_flops.items():
+        if skip_trace:
+            continue
         trace = trace_d_input(netlist, ff, memo=trace_memo)
         cross_domains = trace.source_domains - {ff.clock_net}
         if not cross_domains:
@@ -190,19 +196,40 @@ def analyze_cdc(
                     # error though, since the sync pattern was recognized
                 pass
             elif trace.has_combo_logic:
-                violations.append(Violation(
-                    rule=ViolationType.COMBO_BEFORE_SYNC,
-                    severity=Severity.ERROR,
-                    message=(
-                        f"Combinational logic on CDC path: "
-                        f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
-                        f"source: {src_ff_name}, dest: {ff_name}"
-                    ),
-                    signal_name=signal_name,
-                    source_domain=src_domain_name,
-                    dest_domain=dst_domain_name,
-                    crossing=crossing,
-                ))
+                # Check if this combo path is inside a CDC primitive
+                # (both FFs from CDC module source files → internal path)
+                if _is_cdc_internal_path(netlist, src_ff_name, ff_name, cdc_files):
+                    pass  # suppress — internal to CDC primitive
+                elif is_handshake_protected(
+                    netlist, ff, src_domain_net, synchronizers
+                ):
+                    violations.append(Violation(
+                        rule=ViolationType.COMBO_BEFORE_SYNC,
+                        severity=Severity.INFO,
+                        message=(
+                            f"Combinational CDC path with handshake protection: "
+                            f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
+                            f"gated by synchronized control"
+                        ),
+                        signal_name=signal_name,
+                        source_domain=src_domain_name,
+                        dest_domain=dst_domain_name,
+                        crossing=crossing,
+                    ))
+                else:
+                    violations.append(Violation(
+                        rule=ViolationType.COMBO_BEFORE_SYNC,
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Combinational logic on CDC path: "
+                            f"'{signal_name}' ({src_domain_name} -> {dst_domain_name}), "
+                            f"source: {src_ff_name}, dest: {ff_name}"
+                        ),
+                        signal_name=signal_name,
+                        source_domain=src_domain_name,
+                        dest_domain=dst_domain_name,
+                        crossing=crossing,
+                    ))
             elif bit_width > 1:
                 # Multi-bit crossing without synchronizer — check for
                 # handshake/qualifier protection before flagging
@@ -251,6 +278,12 @@ def analyze_cdc(
                     dest_domain=dst_domain_name,
                     crossing=crossing,
                 ))
+
+    # === Phase 1b: Port-boundary CDC analysis ===
+    # Check module output ports driven by combinational logic from a clock domain.
+    # These are invisible to FF-to-FF tracing but are real CDC hazards when the
+    # output is consumed in a different domain externally.
+    _check_port_boundary_cdc(netlist, domains, domain_names, trace_memo, violations)
 
     # === Phase 2: Reconvergence analysis ===
     reconvergences = find_reconvergences(
@@ -343,6 +376,143 @@ def _get_crossing_signal_name(netlist: Netlist, dest_ff) -> str:
     if dest_ff.d_bits:
         return netlist.get_net_name(dest_ff.d_bits[0])
     return "?"
+
+
+def _build_cdc_source_files(netlist: Netlist) -> set[str]:
+    """Dynamically identify source files that are CDC primitives.
+
+    A source file is a CDC primitive if:
+    1. It contains FFs from 2+ clock domains (handles CDC internally)
+    2. It is NOT the only source file (not the top-level design itself)
+
+    This distinguishes between a CDC module (prim_reg_cdc.sv — handles
+    crossings internally) and a top-level design (soc.sv — has crossings
+    that need to be checked).
+    """
+    from collections import defaultdict
+    file_clocks: dict[str, set[int]] = defaultdict(set)
+    file_ff_count: dict[str, int] = defaultdict(int)
+
+    for ff in netlist.flip_flops.values():
+        if ff.src:
+            src_file = ff.src.split(":")[0] if ":" in ff.src else ff.src
+            file_clocks[src_file].add(ff.clock_net)
+            file_ff_count[src_file] += 1
+
+    # Files with FFs on 2+ domains
+    multi_domain_files = {f for f, clocks in file_clocks.items() if len(clocks) >= 2}
+
+    # If there's only one source file, it's the top-level — don't suppress
+    if len(file_clocks) <= 1:
+        return set()
+
+    # Also exclude the file with the most FFs (likely the top-level or main logic)
+    # CDC primitives are typically small helper modules, not the biggest file
+    if multi_domain_files:
+        biggest = max(multi_domain_files, key=lambda f: file_ff_count[f])
+        # Only exclude if it has significantly more FFs than others
+        avg_size = sum(file_ff_count[f] for f in multi_domain_files) / len(multi_domain_files)
+        if file_ff_count[biggest] > avg_size * 3:
+            multi_domain_files.discard(biggest)
+
+    return multi_domain_files
+
+
+def _is_cdc_internal_path(
+    netlist: Netlist,
+    src_ff_name: str,
+    dst_ff_name: str,
+    cdc_files: set[str] | None = None,
+) -> bool:
+    """Check if both FFs are inside CDC primitive modules (internal path).
+
+    Uses source file attribution: if both FFs originate from files that
+    contain multi-domain FFs (dynamically detected CDC primitives), the
+    crossing is internal to the CDC mechanism.
+    """
+    src_ff = netlist.flip_flops.get(src_ff_name)
+    dst_ff = netlist.flip_flops.get(dst_ff_name)
+    if not src_ff or not dst_ff:
+        return False
+
+    if cdc_files is None:
+        cdc_files = _build_cdc_source_files(netlist)
+
+    def _from_cdc_file(ff):
+        src = ff.src.split(":")[0] if ":" in ff.src else ff.src
+        return src in cdc_files
+
+    return _from_cdc_file(src_ff) and _from_cdc_file(dst_ff)
+
+
+def _check_port_boundary_cdc(
+    netlist: Netlist,
+    domains: dict[int, ClockDomain],
+    domain_names: dict[int, str],
+    trace_memo: dict,
+    violations: list[Violation],
+) -> None:
+    """Check module output ports for unregistered CDC hazards.
+
+    Pattern: a module output port is driven by combinational logic sourced
+    from clock domain X. Any external consumer in domain Y will see this as
+    an unsynchronized combinational crossing. This is the bug pattern from
+    OpenTitan #19200 (fsm_err_o).
+
+    We trace each output port bit backward. If it reaches FFs in a specific
+    domain through combinational logic (not directly from a FF Q-output),
+    it's a combinational port that could cause CDC issues for consumers.
+    """
+    for port_name, port_data in netlist.ports.items():
+        if port_data["direction"] != "output":
+            continue
+
+        for bit in port_data["bits"]:
+            if not isinstance(bit, int):
+                continue  # constant-driven output
+
+            # Check if this bit is directly a FF Q-output (registered = safe)
+            if bit in netlist.driver_index:
+                cell_name, port = netlist.driver_index[bit]
+                cell_data = netlist.cells.get(cell_name, {})
+                if is_dff_type(cell_data.get("type", "")):
+                    continue  # registered output, not a hazard
+
+            # Trace backward to find source domain(s)
+            from .trace import _trace_bit
+            source_ffs: list = []
+            source_doms: set[int] = set()
+            visited: set[int] = set()
+            has_combo, from_input = _trace_bit(
+                netlist, bit, visited, source_ffs, source_doms, depth=0
+            )
+
+            if not has_combo or not source_doms:
+                continue  # either registered or no FF source
+
+            # This output port is combinational from a specific domain.
+            # Flag each source domain — external consumers in other domains
+            # will see an unsynchronized combinational crossing.
+            # Only flag if the design has multiple clock domains
+            # (single-domain designs have no CDC concern on outputs)
+            if len(domains) < 2:
+                continue
+
+            for src_net in source_doms:
+                src_name = domain_names.get(src_net, f"net_{src_net}")
+                violations.append(Violation(
+                    rule=ViolationType.PORT_CDC_HAZARD,
+                    severity=Severity.INFO,
+                    message=(
+                        f"Combinational output port '{port_name}' driven by "
+                        f"{src_name} domain through logic — potential CDC hazard "
+                        f"if consumed in a different domain externally"
+                    ),
+                    signal_name=port_name,
+                    source_domain=src_name,
+                    dest_domain="(external)",
+                ))
+                break
 
 
 def _check_frequency_ratios(

@@ -1,0 +1,15 @@
+CDC analysis complete. Report written to `cdc_report.json`.
+
+**Summary — 4 clock domains, 7 violations, 10 safe crossings:**
+
+| # | Rule | Signal | Crossing | Line |
+|---|------|--------|----------|------|
+| 1 | MULTI_BIT_CDC | `uart_rx_data` | per_clk → sys_clk | 124 |
+| 2 | MISSING_SYNC | `uart_rx_valid` | per_clk → sys_clk | 125 |
+| 3 | MULTI_BIT_CDC | `gpio_in` | per_clk → sys_clk | 126 |
+| 4 | MISSING_SYNC | `usb_valid_r` | usb_clk → per_clk | 251 |
+| 5 | MULTI_BIT_CDC | `cpu_status` | sys_clk → per_clk | 258 |
+| 6 | COMBO_BEFORE_SYNC | `usb_flag_masked` | usb_clk → sys_clk | 265 |
+| 7 | RESET_DOMAIN_CROSSING | `per_rst_gen` | per_clk → aon_clk | 280 |
+
+Safe crossings include the pulse synchronizer for UART TX, gray-coded FIFO pointer to USB, the DMA req/ack 4-phase handshake, and several properly instantiated 2FF synchronizers (`wakeup_event`, `gpio_flag_per`, `usb_valid_r→sys_clk`, `wdog_kick`).

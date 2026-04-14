@@ -1,0 +1,126 @@
+{
+  "clock_domains": ["sys_clk", "per_clk", "aon_clk", "usb_clk"],
+  "violations": [
+    {
+      "rule": "MULTI_BIT_CDC",
+      "signal": "uart_rx_data",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "8-bit uart_rx_data (per_clk domain input) is directly sampled by cpu_tx_data register in sys_clk (line 124) with no synchronizer, gray-code encoding, or handshake protocol. Multi-bit bus may produce corrupted intermediate values in the destination domain."
+    },
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "uart_rx_valid",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "1-bit uart_rx_valid (per_clk domain input) is directly sampled by cpu_tx_valid register in sys_clk (line 125) with no 2FF synchronizer. Signal may be captured in a metastable state."
+    },
+    {
+      "rule": "MULTI_BIT_CDC",
+      "signal": "gpio_in",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "8-bit gpio_in (per_clk domain input) is directly sampled by cpu_status register in sys_clk (line 126) with no synchronizer, gray-code encoding, or handshake. Individual bits may resolve at different times, producing values that never existed on the source bus."
+    },
+    {
+      "rule": "MISSING_SYNC",
+      "signal": "usb_valid_r",
+      "source_domain": "usb_clk",
+      "dest_domain": "per_clk",
+      "explanation": "usb_valid_r is registered in usb_clk (line 237) but sampled directly by per_usb_flag in per_clk (line 251) with no synchronizer. Note that usb_valid_r IS properly synchronized into sys_clk via u_usb_valid_sync, but the per_clk crossing is completely unprotected."
+    },
+    {
+      "rule": "MULTI_BIT_CDC",
+      "signal": "cpu_status",
+      "source_domain": "sys_clk",
+      "dest_domain": "per_clk",
+      "explanation": "8-bit cpu_status register (sys_clk, line 126) is directly sampled by gpio_out in per_clk (line 258) with no synchronizer, gray-code encoding, or handshake protocol. All 8 bits may resolve independently causing bit-skew corruption."
+    },
+    {
+      "rule": "COMBO_BEFORE_SYNC",
+      "signal": "usb_flag_masked",
+      "source_domain": "usb_clk",
+      "dest_domain": "sys_clk",
+      "explanation": "Combinational AND gate (usb_tx_data[0] & usb_valid_r) at line 265 produces usb_flag_masked in usb_clk domain, which feeds directly into the first stage of a 2FF synchronizer (usb_mask_sync1) in sys_clk (line 269). Glitches from the combinational logic can be captured by the synchronizer, causing incorrect values even though a 2FF sync is present. The source signal should be registered before crossing."
+    },
+    {
+      "rule": "RESET_DOMAIN_CROSSING",
+      "signal": "per_rst_gen",
+      "source_domain": "per_clk",
+      "dest_domain": "aon_clk",
+      "explanation": "per_rst_gen is generated in per_clk domain (line 277) and used as an asynchronous reset (negedge per_rst_gen) for aon_error_latch in the aon_clk domain (line 280). The reset assertion and deassertion are not synchronized to aon_clk, risking metastability on deassertion and potential recovery/removal timing violations."
+    }
+  ],
+  "safe_crossings": [
+    {
+      "signal": "cpu_tx_valid -> uart_tx_ready",
+      "source_domain": "sys_clk",
+      "dest_domain": "per_clk",
+      "sync_method": "pulse_sync (toggle + 2FF + edge detect)",
+      "explanation": "cpu_tx_valid pulse in sys_clk is converted to a level toggle, synchronized via 2FF into per_clk, then edge-detected to regenerate the pulse as uart_tx_ready. Instance: u_uart_tx_pulse (line 133)."
+    },
+    {
+      "signal": "fifo_wptr -> fifo_wptr_synced",
+      "source_domain": "sys_clk",
+      "dest_domain": "usb_clk",
+      "sync_method": "gray_ptr_sync (gray encoding + 2FF)",
+      "explanation": "4-bit fifo_wptr is gray-encoded in sys_clk, then passed through a 2FF synchronizer into usb_clk. Gray coding ensures only one bit changes per increment, preventing multi-bit CDC corruption. Instance: u_fifo_ptr (line 141)."
+    },
+    {
+      "signal": "wakeup_event -> wakeup_synced",
+      "source_domain": "aon_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer)",
+      "explanation": "1-bit wakeup_event from aon_clk domain is synchronized into sys_clk via a 2FF synchronizer. wakeup_ack is then derived as a registered version in sys_clk. Instance: u_wakeup_sync (line 150)."
+    },
+    {
+      "signal": "cpu_tx_valid -> cpu_valid_per",
+      "source_domain": "sys_clk",
+      "dest_domain": "per_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer)",
+      "explanation": "1-bit cpu_tx_valid from sys_clk is synchronized into per_clk via a 2FF synchronizer. Instance: u_ctrl_sync (line 164). Note: cpu_valid_per does not appear to be used in downstream logic."
+    },
+    {
+      "signal": "gpio_flag_per -> gpio_flag",
+      "source_domain": "per_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer)",
+      "explanation": "1-bit gpio_flag_per (OR-reduction of gpio_in, registered in per_clk) is synchronized into sys_clk via a 2FF synchronizer. Instance: u_gpio_sync (line 183)."
+    },
+    {
+      "signal": "dma_req -> req_usb_sync2",
+      "source_domain": "sys_clk",
+      "dest_domain": "usb_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer, part of req/ack handshake)",
+      "explanation": "1-bit dma_req from sys_clk is synchronized into usb_clk via a 2FF chain (req_usb_sync1, req_usb_sync2) at lines 201-203. This is the request leg of the DMA handshake."
+    },
+    {
+      "signal": "dma_ack -> dma_ack_sync2",
+      "source_domain": "usb_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer, part of req/ack handshake)",
+      "explanation": "1-bit dma_ack from usb_clk is synchronized into sys_clk via a 2FF chain (dma_ack_sync1, dma_ack_sync2) at lines 211-213. This is the acknowledge leg of the DMA handshake."
+    },
+    {
+      "signal": "dma_data -> dma_data_out",
+      "source_domain": "sys_clk",
+      "dest_domain": "usb_clk",
+      "sync_method": "req/ack handshake (4-phase)",
+      "explanation": "8-bit dma_data is set in sys_clk simultaneously with dma_req assertion (line 197). By the time req_usb_sync2 propagates through the 2FF sync, dma_data has been stable for at least 2 usb_clk cycles. Data is captured in usb_clk only when req_usb_sync2 && !dma_ack (line 208). The full 4-phase handshake ensures data stability throughout the crossing."
+    },
+    {
+      "signal": "wdog_kick -> wdog_kick_synced",
+      "source_domain": "sys_clk",
+      "dest_domain": "aon_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer)",
+      "explanation": "1-bit wdog_kick input (presumed from sys_clk / CPU domain) is synchronized into aon_clk via a 2FF synchronizer. Instance: u_wdog_sync (line 219)."
+    },
+    {
+      "signal": "usb_valid_r -> usb_valid_synced",
+      "source_domain": "usb_clk",
+      "dest_domain": "sys_clk",
+      "sync_method": "sync_2ff (2-flop synchronizer)",
+      "explanation": "1-bit usb_valid_r (registered usb_rx_valid in usb_clk) is synchronized into sys_clk via a 2FF synchronizer. Instance: u_usb_valid_sync (line 240)."
+    }
+  ]
+}

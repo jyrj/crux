@@ -1,0 +1,12 @@
+CDC analysis complete. Report written to `cdc_report.json`.
+
+**Summary — 4 violations found:**
+
+| Rule | Signal | Crossing | Issue |
+|------|--------|----------|-------|
+| MISSING_SYNC | `token_hash_req` | clk_lc → clk_kmac | Used directly in FSM; existing `req_sync2` synchronizer output is dead logic |
+| COMBO_BEFORE_SYNC | `hash_done` | clk_kmac → clk_lc | `(state_q == DONE)` combinational decode feeds first sync flop — can glitch on multi-bit state transitions |
+| MISSING_SYNC | `fsm_err_o` | clk_kmac → clk_lc | Combinational output with no synchronization at all |
+| RESET_DOMAIN_CROSSING | `rst_n` | shared | Single async reset used in both domains without per-domain reset synchronizers |
+
+**1 safe crossing (partial):** The `ack_sync1→ack_sync2` 2-flop synchronizer structure is correct, but its effectiveness is undermined by the COMBO_BEFORE_SYNC issue on its input.

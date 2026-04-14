@@ -1,0 +1,73 @@
+{
+  "rv_timer": {
+    "ff_count": 40,
+    "cell_count": 467,
+    "domain_count": 1,
+    "domains": {
+      "clk_i": 40
+    },
+    "total_crossings": 0,
+    "synchronized": 0,
+    "errors": 0,
+    "warnings": 0,
+    "info": 0,
+    "analysis_ms": 6.8,
+    "violations": [],
+    "synth_time_s": 0.07,
+    "source_files": 35
+  },
+  "uart": {
+    "ff_count": 138,
+    "cell_count": 435,
+    "domain_count": 1,
+    "domains": {
+      "clk_i": 138
+    },
+    "total_crossings": 0,
+    "synchronized": 0,
+    "errors": 0,
+    "warnings": 0,
+    "info": 0,
+    "analysis_ms": 106.7,
+    "violations": [],
+    "synth_time_s": 0.05,
+    "source_files": 12
+  },
+  "spi_host": {
+    "error": "compilation failed"
+  },
+  "i2c": {
+    "ff_count": 121,
+    "cell_count": 2358,
+    "domain_count": 1,
+    "domains": {
+      "clk_i": 121
+    },
+    "total_crossings": 0,
+    "synchronized": 0,
+    "errors": 0,
+    "warnings": 0,
+    "info": 0,
+    "analysis_ms": 103.4,
+    "violations": [],
+    "synth_time_s": 0.25,
+    "source_files": 22
+  },
+  "hmac": {
+    "ff_count": 202,
+    "cell_count": 2890,
+    "domain_count": 1,
+    "domains": {
+      "clk_i": 202
+    },
+    "total_crossings": 0,
+    "synchronized": 0,
+    "errors": 0,
+    "warnings": 0,
+    "info": 0,
+    "analysis_ms": 153353.6,
+    "violations": [],
+    "synth_time_s": 2.31,
+    "source_files": 45
+  }
+}

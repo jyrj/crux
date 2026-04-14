@@ -1,0 +1,14 @@
+CDC analysis complete. Here's the summary:
+
+**3 clock domains identified:** `clk_i` (main system), `clk_aon_i` (always-on), `async` (sleep_mode_i)
+
+**1 violation found:**
+- **RECONVERGENCE** — `wkup_count_hi` / `wkup_count_lo`: The 64-bit wakeup counter is updated atomically in the `clk_aon_i` domain but crosses back to `clk_i` through two independent `prim_reg_cdc` instances. The independently-synced halves reconverge at software read time, risking an incoherent 64-bit value during low-half rollovers. This is a known OpenTitan pattern mitigated by a software read-twice protocol.
+
+**13 safe crossings identified**, all using proper synchronization:
+- `sleep_mode_i`: 2FF sync (`prim_flop_2sync`)
+- `lc_escalate_en_i`: `prim_lc_sync` with redundant `lc_tx_t` encoding
+- 10 register crossings (`wkup_ctrl`, `wkup_thold_hi/lo`, `wkup_count_hi/lo`, `wdog_ctrl`, `wdog_bark/bite_thold`, `wdog_count`, `wkup_cause`): All use `prim_reg_cdc` with req/ack handshake protocol
+- `aon_intr_set[1:0]`: `prim_edge_detector` with `prim_flop_2sync`
+
+No MISSING_SYNC, COMBO_BEFORE_SYNC, RESET_DOMAIN_CROSSING, or CLOCK_GLITCH violations found. The design uses OpenTitan's standard `prim_reg_cdc` infrastructure consistently for all register crossings.

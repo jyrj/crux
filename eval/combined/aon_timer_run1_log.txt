@@ -1,0 +1,22 @@
+CDC review complete. Results written to `combined_review.json`.
+
+**Summary:**
+
+| Category | Count | Verdict |
+|---|---|---|
+| COMBO_BEFORE_SYNC errors | 13 | All FALSE_POSITIVE |
+| RECONVERGENCE warnings | 13 | All FALSE_POSITIVE |
+| Additional findings | 3 | All warnings |
+
+**COMBO_BEFORE_SYNC (all false positives)** fall into 4 patterns:
+- **4x `src_req_d`** signals: Internal NRZ handshake FSM logic in `prim_sync_reqack` within `prim_reg_cdc_arb` (gen_wr_req). Combo is post-sync in the destination domain.
+- **4x `aon_*_ds`** signals: Multi-bit data paths through `prim_reg_cdc`. Data held stable by req/ack handshake protocol; write-enable gated by synchronized handshake completion.
+- **4x `$procmux$*`** signals: Internal arbiter logic in `prim_reg_cdc_arb`, post-sync destination-domain combo.
+- **1x `aon_wkup_ctrl_we`**: Write-enable = stable `txn_bits_q` AND synchronized pulse from `prim_pulse_sync`. Protocol guarantees data stability.
+
+**RECONVERGENCE (all false positives)**: All 13 involve independently CDC'd register values (thresholds, enables, counts) reconverging in normal clk_aon_i combinational logic. All inputs are stable registered outputs in the AON domain; no metastability or temporal correlation risk.
+
+**Additional findings (3 warnings)**:
+1. Non-atomic 64-bit wakeup threshold (hi/lo split across independent CDCs)
+2. Non-atomic 64-bit wakeup count read/write (same split pattern)
+3. `sleep_mode_i` async input is properly synchronized but upstream glitch-freedom should be verified
